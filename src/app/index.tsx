@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Dimensions,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View
 } from 'react-native';
 
@@ -17,18 +17,15 @@ import {
 
 import { getMonthlySummary } from '../constants/api';
 
-const screenWidth = Dimensions.get("window").width;
-const chartWidth = Math.max(280, screenWidth - (Platform.OS === 'web' ? 80 : 120));
-const barWidth = Platform.OS === 'web' ? 48 : 100;
-
-// 12 bars
-const spacing =
-  chartWidth > 0 ? (chartWidth - (12 * barWidth) - 20) / 11 : 0;
-
 const MONTH_LABELS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const MONTHLY_BUDGET = 3500;
 
 export default function HomeScreen() {
+  const { width } = useWindowDimensions();
+  const chartWidth = Math.max(280, width - (Platform.OS === 'web' ? 80 : 120));
+  const barWidth = Platform.OS === 'web' ? 48 : 100;
+  const spacing = chartWidth > 0 ? (chartWidth - (12 * barWidth) - 20) / 11 : 0;
+
   const [monthlyTotals, setMonthlyTotals] = useState<{ month: number; total: number }[]>([]);
 
   useEffect(() => {
