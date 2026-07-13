@@ -28,8 +28,14 @@ jobs:
       - name: Build Expo web
         run: npx expo export --platform web
 
+      - name: Prepare GitHub Pages export
+        run: |
+          cp dist/index.html dist/404.html
+          touch dist/.nojekyll
+
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./dist
+          enable_jekyll: false
