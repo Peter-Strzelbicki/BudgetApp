@@ -126,6 +126,61 @@ app.get("/budget-lines", async (req, res) => {
   }
 });
 
+// ---------- CATEGORIES & SUBCATEGORIES ----------
+
+app.get("/categories", async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT c.category_id, c.name, c.display_order
+       FROM categories c
+       ORDER BY c.display_order`
+    );
+    res.json(rows);
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ error: "Failed to fetch categories" });
+  }
+});
+
+app.get("/subcategories", async (req, res) => {
+  try {
+    const { category_id } = req.query;
+    let query = `
+      SELECT sc.subcategory_id, sc.category_id, sc.name, sc.display_order
+      FROM subcategories sc
+    `;
+    const params = [];
+    if (category_id) {
+      query += " WHERE sc.category_id = ?";
+      params.push(category_id);
+    }
+    query += " ORDER BY sc.display_order";
+
+    const [rows] = await db.query(query, params);
+    res.json(rows);
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ error: "Failed to fetch subcategories" });
+  }
+});
+
+// ---------- PEOPLE ----------
+
+app.get("/people", async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT person_id, name, is_household
+       FROM people
+       WHERE is_household = TRUE
+       ORDER BY name`
+    );
+    res.json(rows);
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ error: "Failed to fetch people" });
+  }
+});
+
 // ---------- GOALS ----------
 
 app.get("/goals", async (req, res) => {

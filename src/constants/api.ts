@@ -66,3 +66,49 @@ export async function addTransaction(transaction: {
   if (!res.ok) throw new Error("Failed to add transaction");
   return res.json();
 }
+
+export async function getCategories() {
+  if (!API_URL) {
+    return [];
+  }
+
+  try {
+    const res = await fetch(buildUrl("/categories"));
+    if (!res.ok) throw new Error("Failed to fetch categories");
+    return res.json();
+  } catch (error) {
+    console.warn("Failed to fetch categories", error);
+    return [];
+  }
+}
+
+export async function getSubcategories(categoryId?: number) {
+  if (!API_URL) {
+    return [];
+  }
+
+  try {
+    const params = categoryId ? `?category_id=${categoryId}` : '';
+    const res = await fetch(buildUrl(`/subcategories${params}`));
+    if (!res.ok) throw new Error("Failed to fetch subcategories");
+    return res.json();
+  } catch (error) {
+    console.warn("Failed to fetch subcategories", error);
+    return [];
+  }
+}
+
+export async function getPeople() {
+  if (!API_URL) {
+    return [];
+  }
+
+  try {
+    const res = await fetch(buildUrl("/people"));
+    if (!res.ok) throw new Error("Failed to fetch people");
+    return res.json();
+  } catch (error) {
+    console.warn("Failed to fetch people", error);
+    return [];
+  }
+}

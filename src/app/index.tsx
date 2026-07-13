@@ -2,11 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   useWindowDimensions,
-  View
+  View,
 } from 'react-native';
 
 import { router } from 'expo-router';
@@ -30,12 +31,26 @@ export default function HomeScreen() {
   const spacing = chartWidth > 0 ? (chartWidth - (12 * barWidth) - 20) / 11 : 0;
 
   const [monthlyTotals, setMonthlyTotals] = useState<{ month: number; total: number }[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const fetchMonthlySummary = async () => {
+    try {
+      const data = await getMonthlySummary(2026);
+      setMonthlyTotals(data);
+    } catch (err) {
+      console.log(err);
+    }
+  };
 
   useEffect(() => {
-    getMonthlySummary(2026)
-      .then(setMonthlyTotals)
-      .catch(err => console.log(err));
+    fetchMonthlySummary();
   }, []);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await fetchMonthlySummary();
+    setRefreshing(false);
+  };
   // Replace this with your real transaction source (context, redux, API, etc.)
   // Shape: { id, date: 'YYYY-MM-DD', amount }
   const [transactions] = useState([
@@ -91,7 +106,12 @@ export default function HomeScreen() {
   );
 
   return (
-    <ScrollView style={styles.container}>
+    <ScrollView 
+      style={styles.container}
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
+      }
+    >
       <Text style={styles.title}>
         Home Budget
       </Text>
