@@ -16,15 +16,6 @@ import {
 
 import { getMonthlySummary } from '../constants/api';
 
-// inside HomeScreen():
-const [monthlyTotals, setMonthlyTotals] = useState<{ month: number; total: number }[]>([]);
-
-useEffect(() => {
-  getMonthlySummary(2026)
-    .then(setMonthlyTotals)
-    .catch(err => console.log(err));
-}, []);
-
 const screenWidth = Dimensions.get("window").width;
 const chartWidth = screenWidth - 120;
 const barWidth = 100;
@@ -37,6 +28,13 @@ const MONTH_LABELS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct
 const MONTHLY_BUDGET = 3500;
 
 export default function HomeScreen() {
+  const [monthlyTotals, setMonthlyTotals] = useState<{ month: number; total: number }[]>([]);
+
+  useEffect(() => {
+    getMonthlySummary(2026)
+      .then(setMonthlyTotals)
+      .catch(err => console.log(err));
+  }, []);
   // Replace this with your real transaction source (context, redux, API, etc.)
   // Shape: { id, date: 'YYYY-MM-DD', amount }
   const [transactions] = useState([
@@ -49,7 +47,7 @@ export default function HomeScreen() {
     { id: 7, date: "2026-07-08", amount: 3450 },
   ]);
 
-  const [selectedBar, setSelectedBar] = useState(null);
+  const [selectedBar, setSelectedBar] = useState<{ label: string; value: number } | null>(null);
 
   // Recomputes automatically whenever `transactions` changes
   const monthlySpending = useMemo(() => {
@@ -75,7 +73,7 @@ export default function HomeScreen() {
             : "#4CAF50"
       };
     });
-  }, );
+  }, [transactions]);
 
   const avgSpending = useMemo(() => {
     const today = new Date();
@@ -176,7 +174,9 @@ export default function HomeScreen() {
           backgroundColor="#1E1E1E"
           disableScroll
           isAnimated
-          onPress={(item) => setSelectedBar(item)}
+          onPress={(item: { label: string; value: number } | null) => {
+            if (item) setSelectedBar(item);
+          }}
         />
         <Text style={styles.legend}>
           - - - Monthly Budget: ${MONTHLY_BUDGET.toLocaleString()}
