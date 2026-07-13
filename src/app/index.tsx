@@ -51,29 +51,21 @@ export default function HomeScreen() {
     await fetchMonthlySummary();
     setRefreshing(false);
   };
-  // Replace this with your real transaction source (context, redux, API, etc.)
-  // Shape: { id, date: 'YYYY-MM-DD', amount }
-  const [transactions] = useState([
-    { id: 1, date: "2026-01-14", amount: 3200 },
-    { id: 2, date: "2026-02-03", amount: 3900 },
-    { id: 3, date: "2026-03-22", amount: 2800 },
-    { id: 4, date: "2026-04-10", amount: 4200 },
-    { id: 5, date: "2026-05-18", amount: 3100 },
-    { id: 6, date: "2026-06-27", amount: 3500 },
-    { id: 7, date: "2026-07-08", amount: 3450 },
-  ]);
 
   const [selectedBar, setSelectedBar] = useState<{ label: string; value: number } | null>(null);
 
-  // Recomputes automatically whenever `transactions` changes
+  // Recomputes automatically whenever `monthlyTotals` changes
   const monthlySpending = useMemo(() => {
     const today = new Date();
     const currentMonthIndex = today.getMonth(); // 0 = Jan
 
+    // Build totals array from API data (monthlyTotals)
     const totalsByMonth = new Array(12).fill(0);
-    transactions.forEach(tx => {
-      const monthIndex = new Date(tx.date).getMonth();
-      totalsByMonth[monthIndex] += tx.amount;
+    monthlyTotals.forEach(item => {
+      const monthIndex = item.month - 1; // API uses 1-12, array uses 0-11
+      if (monthIndex >= 0 && monthIndex < 12) {
+        totalsByMonth[monthIndex] = item.total;
+      }
     });
 
     return totalsByMonth.map((total, index) => {
@@ -89,11 +81,12 @@ export default function HomeScreen() {
             : "#4CAF50"
       };
     });
-  }, [transactions]);
+  }, [monthlyTotals]);
 
   const avgSpending = useMemo(() => {
     const today = new Date();
     const monthsSoFar = today.getMonth() + 1;
+    if (monthsSoFar === 0 || monthlySpending.length === 0) return 0;
     const total = monthlySpending
       .slice(0, monthsSoFar)
       .reduce((sum, m) => sum + m.value, 0);

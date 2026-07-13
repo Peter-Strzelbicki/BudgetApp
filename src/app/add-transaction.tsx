@@ -46,6 +46,16 @@ export default function AddTransaction() {
 
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (toastMessage) {
+      const timer = setTimeout(() => {
+        setToastMessage(null);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [toastMessage]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -54,8 +64,14 @@ export default function AddTransaction() {
           getCategories(),
           getPeople(),
         ]);
+        console.log('📦 Loaded categories:', cats);
+        console.log('👥 Loaded people:', peeps);
         setCategories(cats);
         setPeople(peeps);
+        
+        if (cats.length === 0) {
+          Alert.alert('No Data', 'No categories found. Please add seed data to the database.');
+        }
       } catch (error) {
         console.error('Failed to load form data:', error);
         Alert.alert('Error', 'Failed to load categories and people');
@@ -79,8 +95,18 @@ export default function AddTransaction() {
   }, [selectedCategory]);
 
   const handleSubmit = async () => {
+    console.log('🔵 ADD TRANSACTION BUTTON CLICKED');
+    console.log('Form state:', { selectedSubcategory, amount, date, selectedCategory });
+    
     if (!selectedSubcategory || !amount || !date) {
-      Alert.alert('Validation', 'Please fill in Category, Subcategory, Amount, and Date');
+      const missing = [];
+      if (!selectedCategory) missing.push('Category');
+      if (!selectedSubcategory) missing.push('Subcategory');
+      if (!amount) missing.push('Amount');
+      if (!date) missing.push('Date');
+      const errorMsg = `Missing fields: ${missing.join(', ')}`;
+      console.error('❌ Validation failed:', errorMsg);
+      Alert.alert('Validation Error', errorMsg);
       return;
     }
 
@@ -99,12 +125,8 @@ export default function AddTransaction() {
       
       await addTransaction(payload);
 
-      Alert.alert('Success', 'Transaction added successfully!', [
-        {
-          text: 'OK',
-          onPress: () => resetForm(),
-        },
-      ]);
+      setToastMessage('✅ Transaction added!');
+      resetForm();
     } catch (error: any) {
       console.error('Failed to add transaction:', error);
       const errorMessage = error?.message || 'Failed to add transaction. Please try again.';
@@ -133,7 +155,8 @@ export default function AddTransaction() {
   }
 
   return (
-    <ScrollView style={styles.container}>
+    <>
+      <ScrollView style={styles.container}>
       <Text style={styles.title}>Add Transaction</Text>
 
       {/* Category Selection */}
@@ -288,6 +311,13 @@ export default function AddTransaction() {
 
       <View style={styles.spacing} />
     </ScrollView>
+
+    {toastMessage && (
+      <View style={styles.toast}>
+        <Text style={styles.toastText}>{toastMessage}</Text>
+      </View>
+    )}
+    </>
   );
 }
 
@@ -397,5 +427,21 @@ const styles = StyleSheet.create({
   },
   spacing: {
     height: 30,
+  },
+  toast: {
+    position: 'absolute',
+    bottom: 40,
+    left: 20,
+    right: 20,
+    backgroundColor: '#4CAF50',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  toastText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
