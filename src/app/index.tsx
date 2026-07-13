@@ -24,7 +24,8 @@ export default function HomeScreen() {
   const { width } = useWindowDimensions();
   // Use a minimum of 1000px for static export, otherwise use actual window width
   const displayWidth = width > 0 ? width : 1000;
-  const chartWidth = Math.max(280, displayWidth - (Platform.OS === 'web' ? 80 : 120));
+  // Subtract only container padding (20px on each side = 40px total)
+  const chartWidth = Math.max(280, displayWidth - 40);
   const barWidth = Platform.OS === 'web' ? 48 : 100;
   const spacing = chartWidth > 0 ? (chartWidth - (12 * barWidth) - 20) / 11 : 0;
 
