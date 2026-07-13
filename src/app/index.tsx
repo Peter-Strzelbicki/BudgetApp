@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Dimensions,
   Pressable,
@@ -13,6 +13,17 @@ import { router } from 'expo-router';
 import {
   BarChart
 } from 'react-native-gifted-charts';
+
+import { getMonthlySummary } from '../constants/api';
+
+// inside HomeScreen():
+const [monthlyTotals, setMonthlyTotals] = useState<{ month: number; total: number }[]>([]);
+
+useEffect(() => {
+  getMonthlySummary(2026)
+    .then(setMonthlyTotals)
+    .catch(err => console.log(err));
+}, []);
 
 const screenWidth = Dimensions.get("window").width;
 const chartWidth = screenWidth - 120;
@@ -64,7 +75,7 @@ export default function HomeScreen() {
             : "#4CAF50"
       };
     });
-  }, [transactions]);
+  }, );
 
   const avgSpending = useMemo(() => {
     const today = new Date();

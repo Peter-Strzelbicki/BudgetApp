@@ -35,6 +35,7 @@
       ]
     ],
     "experiments": {
+      "baseUrl": "https://peter-strzelbicki.github.io/BudgetApp/",
       "typedRoutes": true,
       "reactCompiler": true
     }
