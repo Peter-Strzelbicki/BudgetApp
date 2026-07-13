@@ -55,16 +55,38 @@ export async function addTransaction(transaction: {
   notes?: string;
 }) {
   if (!API_URL) {
-    return { ok: true };
+    console.error('API_URL not configured');
+    throw new Error('API not configured');
   }
 
-  const res = await fetch(buildUrl("/transactions"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(transaction),
-  });
-  if (!res.ok) throw new Error("Failed to add transaction");
-  return res.json();
+  const url = buildUrl("/transactions");
+  console.log('Submitting transaction to:', url);
+  console.log('Payload:', transaction);
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(transaction),
+    });
+
+    const responseText = await res.text();
+    console.log('Response status:', res.status);
+    console.log('Response text:', responseText);
+
+    if (!res.ok) {
+      throw new Error(`Server error: ${res.status} - ${responseText}`);
+    }
+
+    try {
+      return JSON.parse(responseText);
+    } catch {
+      return { success: true };
+    }
+  } catch (error) {
+    console.error('Failed to add transaction:', error);
+    throw error;
+  }
 }
 
 export async function getCategories() {

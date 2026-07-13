@@ -86,14 +86,18 @@ export default function AddTransaction() {
 
     setSubmitting(true);
     try {
-      await addTransaction({
+      const payload = {
         subcategory_id: selectedSubcategory,
         transaction_date: date,
         amount: parseFloat(amount),
         location: location || undefined,
         paid_by_person_id: selectedPerson || undefined,
         notes: notes || undefined,
-      });
+      };
+      
+      console.log('Form payload:', payload);
+      
+      await addTransaction(payload);
 
       Alert.alert('Success', 'Transaction added successfully!', [
         {
@@ -101,9 +105,10 @@ export default function AddTransaction() {
           onPress: () => resetForm(),
         },
       ]);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to add transaction:', error);
-      Alert.alert('Error', 'Failed to add transaction. Please try again.');
+      const errorMessage = error?.message || 'Failed to add transaction. Please try again.';
+      Alert.alert('Error', errorMessage);
     } finally {
       setSubmitting(false);
     }
