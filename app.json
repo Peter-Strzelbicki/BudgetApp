@@ -21,7 +21,8 @@
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/favicon.png",
+      "bundler": "metro"
     },
     "plugins": [
       "expo-router",
@@ -35,7 +36,7 @@
       ]
     ],
     "experiments": {
-      "baseUrl": "https://peter-strzelbicki.github.io/BudgetApp/",
+      "baseUrl": "/BudgetApp",
       "typedRoutes": true,
       "reactCompiler": true
     }
