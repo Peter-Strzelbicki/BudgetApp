@@ -2,9 +2,6 @@
 -- SEED DATA FOR HOME BUDGET DATABASE
 -- =====================================================================
 
--- Temporarily disable foreign key checks to avoid constraint violations
-SET FOREIGN_KEY_CHECKS=0;
-
 -- Clear existing data (in reverse order of foreign key dependencies)
 DELETE FROM transactions;
 DELETE FROM goals;
@@ -15,13 +12,10 @@ DELETE FROM subcategories;
 DELETE FROM categories;
 DELETE FROM people;
 
--- Re-enable foreign key checks
-SET FOREIGN_KEY_CHECKS=1;
-
 -- PEOPLE
 INSERT INTO people (name, is_household) VALUES
-('Peter', TRUE),
-('Sailah', TRUE);
+('Peter', 1),
+('Sailah', 1);
 
 -- CATEGORIES
 INSERT INTO categories (name, display_order) VALUES

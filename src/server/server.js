@@ -1,7 +1,7 @@
 require("dotenv").config();
 
 const express = require("express");
-const mysql = require("mysql2/promise");
+const sql = require("mssql");
 const cors = require("cors");
 
 const app = express();
@@ -9,14 +9,63 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const db = mysql.createPool({
-  host: process.env.DB_HOST,
-  port: process.env.DB_PORT,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
-  ssl: { rejectUnauthorized: true }
-});
+const connectionString = process.env.DB_CONNECTION_STRING || process.env.SQLSERVER_CONNECTION_STRING;
+const databaseName = process.env.DB_NAME || "HomeBudget";
+const poolConfig = connectionString
+  ? {
+      connectionString: connectionString.includes("Initial Catalog=")
+        ? connectionString
+        : `${connectionString};Initial Catalog=${databaseName}`,
+      options: {
+        encrypt: false,
+        trustServerCertificate: true,
+        enableArithAbort: true,
+      },
+      pool: {
+        max: 10,
+        min: 0,
+        idleTimeoutMillis: 30000,
+      },
+    }
+  : {
+      server: process.env.DB_SERVER || process.env.DB_HOST || "localhost",
+      port: Number(process.env.DB_PORT || 1433),
+      user: process.env.DB_USER,
+      password: process.env.DB_PASSWORD,
+      database: databaseName,
+      options: {
+        encrypt: false,
+        trustServerCertificate: true,
+        enableArithAbort: true,
+      },
+      pool: {
+        max: 10,
+        min: 0,
+        idleTimeoutMillis: 30000,
+      },
+    };
+
+const pool = new sql.ConnectionPool(poolConfig);
+
+let dbConnected = false;
+
+async function getDb() {
+  if (!dbConnected) {
+    await pool.connect();
+    dbConnected = true;
+  }
+  return pool;
+}
+
+async function query(sqlText, params = {}) {
+  const db = await getDb();
+  const request = db.request();
+  Object.entries(params).forEach(([name, value]) => {
+    request.input(name, value);
+  });
+  const result = await request.query(sqlText);
+  return result.recordset;
+}
 
 app.get("/", (req, res) => {
   res.send("Budget API running");
@@ -24,7 +73,7 @@ app.get("/", (req, res) => {
 
 app.get("/test-db", async (req, res) => {
   try {
-    const [rows] = await db.query("SELECT NOW() AS time");
+    const rows = await query("SELECT GETDATE() AS time");
     res.json(rows);
   } catch (error) {
     console.log(error);
@@ -33,27 +82,26 @@ app.get("/test-db", async (req, res) => {
 });
 
 // ---------- TRANSACTIONS ----------
-
-// GET /transactions?month=7&year=2026
 app.get("/transactions", async (req, res) => {
   try {
     const { month, year } = req.query;
-    let query = `
+    let queryText = `
       SELECT t.transaction_id, t.transaction_date, t.amount, t.location, t.notes,
              sc.name AS subcategory, c.name AS category, p.name AS paid_by
-      FROM transactions t
-      JOIN subcategories sc ON sc.subcategory_id = t.subcategory_id
-      JOIN categories c ON c.category_id = sc.category_id
-      LEFT JOIN people p ON p.person_id = t.paid_by_person_id
+      FROM dbo.transactions t
+      JOIN dbo.subcategories sc ON sc.subcategory_id = t.subcategory_id
+      JOIN dbo.categories c ON c.category_id = sc.category_id
+      LEFT JOIN dbo.people p ON p.person_id = t.paid_by_person_id
     `;
-    const params = [];
+    const params = {};
     if (month && year) {
-      query += " WHERE MONTH(t.transaction_date) = ? AND YEAR(t.transaction_date) = ?";
-      params.push(month, year);
+      queryText += " WHERE MONTH(t.transaction_date) = @month AND YEAR(t.transaction_date) = @year";
+      params.month = Number(month);
+      params.year = Number(year);
     }
-    query += " ORDER BY t.transaction_date DESC";
+    queryText += " ORDER BY t.transaction_date DESC";
 
-    const [rows] = await db.query(query, params);
+    const rows = await query(queryText, params);
     res.json(rows);
   } catch (error) {
     console.log(error);
@@ -61,7 +109,6 @@ app.get("/transactions", async (req, res) => {
   }
 });
 
-// POST /transactions  (used by add-transaction.tsx)
 app.post("/transactions", async (req, res) => {
   try {
     const { subcategory_id, transaction_date, amount, location, paid_by_person_id, notes } = req.body;
@@ -70,32 +117,39 @@ app.post("/transactions", async (req, res) => {
       return res.status(400).json({ error: "subcategory_id, transaction_date, and amount are required" });
     }
 
-    const [result] = await db.query(
-      `INSERT INTO transactions (subcategory_id, transaction_date, amount, location, paid_by_person_id, notes)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [subcategory_id, transaction_date, amount, location || null, paid_by_person_id || null, notes || null]
-    );
+    const db = await getDb();
+    const request = db.request();
+    request.input("subcategory_id", sql.Int, Number(subcategory_id));
+    request.input("transaction_date", sql.Date, transaction_date);
+    request.input("amount", sql.Decimal(10, 2), Number(amount));
+    request.input("location", sql.NVarChar(100), location || null);
+    request.input("paid_by_person_id", sql.Int, paid_by_person_id ? Number(paid_by_person_id) : null);
+    request.input("notes", sql.NVarChar(255), notes || null);
 
-    res.status(201).json({ transaction_id: result.insertId });
+    const result = await request.query(`
+      INSERT INTO dbo.transactions (subcategory_id, transaction_date, amount, location, paid_by_person_id, notes)
+      OUTPUT INSERTED.transaction_id AS transaction_id
+      VALUES (@subcategory_id, @transaction_date, @amount, @location, @paid_by_person_id, @notes)
+    `);
+
+    res.status(201).json({ transaction_id: result.recordset[0].transaction_id });
   } catch (error) {
     console.log(error);
     res.status(500).json({ error: "Failed to add transaction" });
   }
 });
 
-// ---------- BUDGET SUMMARY (for your homepage chart) ----------
-
-// GET /summary/monthly?year=2026 -> one row per month with total spend
+// ---------- BUDGET SUMMARY ----------
 app.get("/summary/monthly", async (req, res) => {
   try {
     const { year } = req.query;
-    const [rows] = await db.query(
+    const rows = await query(
       `SELECT MONTH(transaction_date) AS month, SUM(amount) AS total
-       FROM transactions
-       WHERE YEAR(transaction_date) = ?
+       FROM dbo.transactions
+       WHERE YEAR(transaction_date) = @year
        GROUP BY MONTH(transaction_date)
        ORDER BY month`,
-      [year]
+      { year: Number(year) }
     );
     res.json(rows);
   } catch (error) {
@@ -105,19 +159,18 @@ app.get("/summary/monthly", async (req, res) => {
 });
 
 // ---------- BUDGET LINES ----------
-
 app.get("/budget-lines", async (req, res) => {
   try {
     const { month, year } = req.query;
-    const [rows] = await db.query(
+    const rows = await query(
       `SELECT bl.subcategory_id, sc.name AS subcategory, c.name AS category,
               bl.projected_amount, bl.actual_amount
-       FROM budget_lines bl
-       JOIN subcategories sc ON sc.subcategory_id = bl.subcategory_id
-       JOIN categories c ON c.category_id = sc.category_id
-       JOIN budget_periods bp ON bp.period_id = bl.period_id
-       WHERE bp.month = ? AND bp.year = ?`,
-      [month, year]
+       FROM dbo.budget_lines bl
+       JOIN dbo.subcategories sc ON sc.subcategory_id = bl.subcategory_id
+       JOIN dbo.categories c ON c.category_id = sc.category_id
+       JOIN dbo.budget_periods bp ON bp.period_id = bl.period_id
+       WHERE bp.month = @month AND bp.year = @year`,
+      { month: Number(month), year: Number(year) }
     );
     res.json(rows);
   } catch (error) {
@@ -127,14 +180,13 @@ app.get("/budget-lines", async (req, res) => {
 });
 
 // ---------- CATEGORIES & SUBCATEGORIES ----------
-
 app.get("/categories", async (req, res) => {
   try {
-    const [rows] = await db.query(
-      `SELECT c.category_id, c.name, c.display_order
-       FROM categories c
-       ORDER BY c.display_order`
-    );
+    const rows = await query(`
+      SELECT c.category_id, c.name, c.display_order
+      FROM dbo.categories c
+      ORDER BY c.display_order
+    `);
     res.json(rows);
   } catch (error) {
     console.log(error);
@@ -145,18 +197,18 @@ app.get("/categories", async (req, res) => {
 app.get("/subcategories", async (req, res) => {
   try {
     const { category_id } = req.query;
-    let query = `
+    let queryText = `
       SELECT sc.subcategory_id, sc.category_id, sc.name, sc.display_order
-      FROM subcategories sc
+      FROM dbo.subcategories sc
     `;
-    const params = [];
+    const params = {};
     if (category_id) {
-      query += " WHERE sc.category_id = ?";
-      params.push(category_id);
+      queryText += " WHERE sc.category_id = @category_id";
+      params.category_id = Number(category_id);
     }
-    query += " ORDER BY sc.display_order";
+    queryText += " ORDER BY sc.display_order";
 
-    const [rows] = await db.query(query, params);
+    const rows = await query(queryText, params);
     res.json(rows);
   } catch (error) {
     console.log(error);
@@ -165,15 +217,14 @@ app.get("/subcategories", async (req, res) => {
 });
 
 // ---------- PEOPLE ----------
-
 app.get("/people", async (req, res) => {
   try {
-    const [rows] = await db.query(
-      `SELECT person_id, name, is_household
-       FROM people
-       WHERE is_household = TRUE
-       ORDER BY name`
-    );
+    const rows = await query(`
+      SELECT person_id, name, is_household
+      FROM dbo.people
+      WHERE is_household = 1
+      ORDER BY name
+    `);
     res.json(rows);
   } catch (error) {
     console.log(error);
@@ -182,11 +233,10 @@ app.get("/people", async (req, res) => {
 });
 
 // ---------- GOALS ----------
-
 app.get("/goals", async (req, res) => {
   try {
     const { year } = req.query;
-    const [rows] = await db.query("SELECT * FROM goals WHERE year = ?", [year]);
+    const rows = await query("SELECT * FROM dbo.goals WHERE year = @year", { year: Number(year) });
     res.json(rows);
   } catch (error) {
     console.log(error);
@@ -197,11 +247,16 @@ app.get("/goals", async (req, res) => {
 app.post("/goals", async (req, res) => {
   try {
     const { year, description } = req.body;
-    const [result] = await db.query(
-      "INSERT INTO goals (year, description) VALUES (?, ?)",
-      [year, description]
-    );
-    res.status(201).json({ goal_id: result.insertId });
+    const db = await getDb();
+    const request = db.request();
+    request.input("year", sql.SmallInt, Number(year));
+    request.input("description", sql.NVarChar(255), description);
+    const result = await request.query(`
+      INSERT INTO dbo.goals (year, description)
+      OUTPUT INSERTED.goal_id AS goal_id
+      VALUES (@year, @description)
+    `);
+    res.status(201).json({ goal_id: result.recordset[0].goal_id });
   } catch (error) {
     console.log(error);
     res.status(500).json({ error: "Failed to add goal" });

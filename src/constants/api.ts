@@ -1,4 +1,11 @@
-const API_URL = process.env.EXPO_PUBLIC_API_URL?.trim();
+import { Platform } from 'react-native';
+
+const DEFAULT_API_URL = Platform.select({
+  android: 'http://10.0.2.2:3000',
+  default: 'http://localhost:3000',
+});
+
+const API_URL = process.env.EXPO_PUBLIC_API_URL?.trim() || DEFAULT_API_URL;
 const FALLBACK_MONTHLY_SUMMARY = [
   { month: 1, total: 3200 },
   { month: 2, total: 3900 },
@@ -17,15 +24,54 @@ function buildUrl(path: string) {
   return `${API_URL}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
+function delay(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function requestJson<T>(path: string, init?: RequestInit, retries = 3): Promise<T> {
+  const url = buildUrl(path);
+
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(url, init);
+      const responseText = await res.text();
+
+      if (!res.ok) {
+        if ((res.status >= 500 || res.status === 429) && attempt < retries) {
+          console.warn(`Request failed (${res.status}) for ${path}; retrying (${attempt}/${retries})`);
+          await delay(1000 * attempt);
+          continue;
+        }
+
+        throw new Error(`Server error: ${res.status} - ${responseText}`);
+      }
+
+      if (!responseText) {
+        return [] as T;
+      }
+
+      return JSON.parse(responseText) as T;
+    } catch (error) {
+      if (attempt < retries) {
+        console.warn(`Request failed for ${path}; retrying (${attempt}/${retries})`, error);
+        await delay(1000 * attempt);
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  throw new Error(`Request failed for ${path}`);
+}
+
 export async function getMonthlySummary(year: number) {
   if (!API_URL) {
     return FALLBACK_MONTHLY_SUMMARY;
   }
 
   try {
-    const res = await fetch(buildUrl(`/summary/monthly?year=${year}`));
-    if (!res.ok) throw new Error("Failed to fetch monthly summary");
-    return res.json();
+    return await requestJson<{ month: number; total: number }[]>(`/summary/monthly?year=${year}`);
   } catch (error) {
     console.warn("Falling back to demo monthly summary data", error);
     return FALLBACK_MONTHLY_SUMMARY;
@@ -41,9 +87,12 @@ export async function getTransactions(month?: number, year?: number) {
     return [];
   }
 
-  const res = await fetch(buildUrl(`/transactions?${params}`));
-  if (!res.ok) throw new Error("Failed to fetch transactions");
-  return res.json();
+  try {
+    return await requestJson<any[]>(`/transactions?${params}`);
+  } catch (error) {
+    console.warn("Failed to fetch transactions", error);
+    return [];
+  }
 }
 
 export async function addTransaction(transaction: {
@@ -64,25 +113,14 @@ export async function addTransaction(transaction: {
   console.log('Payload:', transaction);
 
   try {
-    const res = await fetch(url, {
+    const result = await requestJson<{ success?: boolean; transaction_id?: number }>("/transactions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(transaction),
     });
 
-    const responseText = await res.text();
-    console.log('Response status:', res.status);
-    console.log('Response text:', responseText);
-
-    if (!res.ok) {
-      throw new Error(`Server error: ${res.status} - ${responseText}`);
-    }
-
-    try {
-      return JSON.parse(responseText);
-    } catch {
-      return { success: true };
-    }
+    console.log('Transaction response:', result);
+    return result;
   } catch (error) {
     console.error('Failed to add transaction:', error);
     throw error;
@@ -95,9 +133,7 @@ export async function getCategories() {
   }
 
   try {
-    const res = await fetch(buildUrl("/categories"));
-    if (!res.ok) throw new Error("Failed to fetch categories");
-    return res.json();
+    return await requestJson<any[]>("/categories");
   } catch (error) {
     console.warn("Failed to fetch categories", error);
     return [];
@@ -111,9 +147,7 @@ export async function getSubcategories(categoryId?: number) {
 
   try {
     const params = categoryId ? `?category_id=${categoryId}` : '';
-    const res = await fetch(buildUrl(`/subcategories${params}`));
-    if (!res.ok) throw new Error("Failed to fetch subcategories");
-    return res.json();
+    return await requestJson<any[]>(`/subcategories${params}`);
   } catch (error) {
     console.warn("Failed to fetch subcategories", error);
     return [];
@@ -126,9 +160,7 @@ export async function getPeople() {
   }
 
   try {
-    const res = await fetch(buildUrl("/people"));
-    if (!res.ok) throw new Error("Failed to fetch people");
-    return res.json();
+    return await requestJson<any[]>("/people");
   } catch (error) {
     console.warn("Failed to fetch people", error);
     return [];
