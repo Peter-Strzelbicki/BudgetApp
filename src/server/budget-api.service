@@ -9,7 +9,7 @@ ExecStart=/usr/bin/node /home/pi/BudgetApp/BudgetApp/src/server/server.js
 Restart=on-failure
 RestartSec=5s
 Environment=DB_TYPE=postgres
-Environment=DB_CONNECTION_STRING=postgresql://your_user:your_password@localhost:5432/homebudget
+Environment=DB_CONNECTION_STRING=postgresql://admin:Password123@localhost:5432/homebudget
 Environment=PORT=3000
 User=pi
 Group=pi
