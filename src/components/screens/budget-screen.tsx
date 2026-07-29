@@ -119,7 +119,16 @@ export default function BudgetScreen() {
                 <Text style={[styles.lineActual, percent > 100 && styles.over]}>{formatCurrency(line.actual_amount, 2)} spent</Text>
                 <View style={styles.progress}><View style={[styles.progressFill, percent > 100 && styles.progressOver, { width: `${Math.min(percent, 100)}%` }]} /></View>
               </View>
-              <View style={styles.inputWrap}><Text style={styles.currency}>$</Text><TextInput value={drafts[line.subcategory_id] ?? '0'} onChangeText={value => setDrafts(current => ({ ...current, [line.subcategory_id]: value.replace(/[^0-9.]/g, '') }))} keyboardType="decimal-pad" selectTextOnFocus style={styles.input} /></View>
+              <View style={styles.inputWrap}>
+                <Text style={styles.currency}>$</Text>
+                <TextInput
+                  value={drafts[line.subcategory_id] ?? '0'}
+                  onChangeText={value => setDrafts(current => ({ ...current, [line.subcategory_id]: value.replace(/[^0-9.]/g, '') }))}
+                  keyboardType="decimal-pad"
+                  selectTextOnFocus
+                  style={styles.input}
+                />
+              </View>
             </View>;
           })}
         </Panel>;
@@ -144,7 +153,7 @@ const styles = StyleSheet.create({
   lineActual: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11 }, over: { color: BudgetColors.coral },
   progress: { width: '100%', maxWidth: 380, height: 4, borderRadius: 2, backgroundColor: BudgetColors.canvas, overflow: 'hidden' },
   progressFill: { height: 4, backgroundColor: BudgetColors.green }, progressOver: { backgroundColor: BudgetColors.coral },
-  inputWrap: { width: 126, height: 40, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: BudgetColors.line, borderRadius: 7, backgroundColor: BudgetColors.canvas },
-  currency: { color: BudgetColors.muted, paddingLeft: 11, fontFamily: Fonts.sans, fontSize: 13 },
-  input: { flex: 1, height: 38, color: BudgetColors.ink, paddingHorizontal: 7, textAlign: 'right', fontFamily: Fonts.sans, fontSize: 13, fontWeight: '700' },
+  inputWrap: { width: 148, height: 40, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: BudgetColors.line, borderRadius: 7, backgroundColor: BudgetColors.canvas, overflow: 'hidden' },
+  currency: { color: BudgetColors.muted, paddingLeft: 11, fontFamily: Fonts.sans, fontSize: 13, flexShrink: 0 },
+  input: { flex: 1, minWidth: 0, height: 38, color: BudgetColors.ink, paddingHorizontal: 7, textAlign: 'right', fontFamily: Fonts.sans, fontSize: 13, fontWeight: '700' },
 });

@@ -1,13 +1,43 @@
 ﻿require("dotenv").config();
 
+const crypto = require("crypto");
+const path = require("path");
 const express = require("express");
 const cors = require("cors");
+const multer = require("multer");
 const { Pool } = require("pg");
+const { parseBudgetWorkbook } = require("./import-xlsx");
+const { commitBudgetImport, findUnmatchedPayers } = require("./import-xlsx-db");
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
+
+const IMPORT_TTL_MS = 30 * 60 * 1000;
+const pendingImports = new Map();
+const workbookUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { files: 1, fileSize: 10 * 1024 * 1024 },
+});
+
+function uploadWorkbook(req, res, next) {
+  workbookUpload.single("file")(req, res, error => {
+    if (!error) return next();
+    const status = error.code === "LIMIT_FILE_SIZE" ? 413 : 400;
+    return res.status(status).json({ error: error.code === "LIMIT_FILE_SIZE" ? "Workbook must be 10 MB or smaller" : error.message });
+  });
+}
+
+function cleanupPendingImports() {
+  const now = Date.now();
+  for (const [importId, pending] of pendingImports) {
+    if (pending.expiresAt <= now) pendingImports.delete(importId);
+  }
+  while (pendingImports.size > 10) {
+    pendingImports.delete(pendingImports.keys().next().value);
+  }
+}
 
 const dbType = process.env.DB_TYPE || "postgres";
 let pool;
@@ -578,6 +608,84 @@ app.delete("/goals/:goalId", async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Failed to delete goal" });
+  }
+});
+
+app.post("/imports/xlsx/preview", uploadWorkbook, async (req, res) => {
+  try {
+    if (dbType !== "postgres") {
+      return res.status(501).json({ error: "Workbook import currently requires PostgreSQL" });
+    }
+    if (!req.file) {
+      return res.status(400).json({ error: "Choose an .xlsx workbook to import" });
+    }
+    if (path.extname(req.file.originalname).toLowerCase() !== ".xlsx") {
+      return res.status(400).json({ error: "Only .xlsx workbooks are supported" });
+    }
+
+    cleanupPendingImports();
+    const parsed = await parseBudgetWorkbook(req.file.buffer);
+    const unmatchedPayers = await findUnmatchedPayers(pool, parsed);
+    const importId = crypto.randomUUID();
+    const expiresAt = Date.now() + IMPORT_TTL_MS;
+    pendingImports.set(importId, { parsed, expiresAt, committing: false });
+
+    const warnings = [
+      ...parsed.warnings,
+      ...unmatchedPayers.map(name => ({
+        sheet: "Workbook",
+        cell: null,
+        message: `Payer not found in the database and will be left unassigned: ${name}`,
+      })),
+    ];
+    const generatedTransactions = parsed.transactions.filter(transaction => transaction.generated).length;
+    const firstMonth = parsed.sheets[0];
+    const lastMonth = parsed.sheets[parsed.sheets.length - 1];
+
+    res.json({
+      import_id: importId,
+      file_name: req.file.originalname,
+      expires_at: new Date(expiresAt).toISOString(),
+      summary: {
+        months: parsed.sheets.length,
+        first_month: `${firstMonth.year}-${String(firstMonth.month).padStart(2, "0")}`,
+        last_month: `${lastMonth.year}-${String(lastMonth.month).padStart(2, "0")}`,
+        budget_lines: parsed.budgets.length,
+        transactions: parsed.transactions.length,
+        detailed_transactions: parsed.transactions.length - generatedTransactions,
+        generated_transactions: generatedTransactions,
+      },
+      sheets: parsed.sheets,
+      warning_count: warnings.length,
+      warnings: warnings.slice(0, 50),
+      sample_budgets: parsed.budgets.filter(row => row.projected_amount > 0).slice(0, 8),
+      sample_transactions: parsed.transactions.slice(0, 8),
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(400).json({ error: error.message || "Failed to read workbook" });
+  }
+});
+
+app.post("/imports/xlsx/:importId/commit", async (req, res) => {
+  const pending = pendingImports.get(req.params.importId);
+  if (!pending || pending.expiresAt <= Date.now()) {
+    pendingImports.delete(req.params.importId);
+    return res.status(404).json({ error: "Import preview expired; choose the workbook again" });
+  }
+  if (pending.committing) {
+    return res.status(409).json({ error: "This workbook import is already running" });
+  }
+
+  pending.committing = true;
+  try {
+    const result = await commitBudgetImport(pool, pending.parsed);
+    pendingImports.delete(req.params.importId);
+    res.json(result);
+  } catch (error) {
+    pending.committing = false;
+    console.error(error);
+    res.status(500).json({ error: error.message || "Failed to import workbook" });
   }
 });
 

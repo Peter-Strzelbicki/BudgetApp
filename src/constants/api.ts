@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import type { DocumentPickerAsset } from 'expo-document-picker';
 
 const DEFAULT_API_URL = Platform.select({
   android: 'http://10.0.2.2:3000',
@@ -63,6 +64,70 @@ export interface Goal {
   goal_id: number;
   year: number;
   description: string;
+}
+
+export interface ImportSheetSummary {
+  name: string;
+  year: number;
+  month: number;
+  budget_lines: number;
+  transactions: number;
+  generated_transactions: number;
+}
+
+export interface ImportWarning {
+  sheet: string;
+  cell: string | null;
+  message: string;
+}
+
+export interface ImportBudgetSample {
+  source_sheet: string;
+  year: number;
+  month: number;
+  category: string;
+  subcategory: string;
+  projected_amount: number;
+}
+
+export interface ImportTransactionSample {
+  source_sheet: string;
+  category: string;
+  subcategory: string;
+  transaction_date: string;
+  amount: number;
+  location: string;
+  paid_by: string | null;
+  generated: boolean;
+}
+
+export interface WorkbookImportPreview {
+  import_id: string;
+  file_name: string;
+  expires_at: string;
+  summary: {
+    months: number;
+    first_month: string;
+    last_month: string;
+    budget_lines: number;
+    transactions: number;
+    detailed_transactions: number;
+    generated_transactions: number;
+  };
+  sheets: ImportSheetSummary[];
+  warning_count: number;
+  warnings: ImportWarning[];
+  sample_budgets: ImportBudgetSample[];
+  sample_transactions: ImportTransactionSample[];
+}
+
+export interface WorkbookImportResult {
+  months_imported: number;
+  budget_lines_upserted: number;
+  transactions_inserted: number;
+  transactions_skipped: number;
+  subcategories_created: string[];
+  unmatched_payers: string[];
 }
 
 function buildUrl(path: string) {
@@ -220,4 +285,28 @@ export function addGoal(year: number, description: string) {
 
 export function deleteGoal(goalId: number) {
   return requestJson<{ goal_id: number }>(`/goals/${goalId}`, { method: 'DELETE' });
+}
+
+export function previewWorkbookImport(asset: DocumentPickerAsset) {
+  const body = new FormData();
+  if (Platform.OS === 'web' && asset.file) {
+    body.append('file', asset.file as unknown as Blob, asset.name);
+  } else {
+    body.append('file', {
+      uri: asset.uri,
+      name: asset.name,
+      type: asset.mimeType || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    } as unknown as Blob);
+  }
+
+  return requestJson<WorkbookImportPreview>('/imports/xlsx/preview', {
+    method: 'POST',
+    body,
+  }, 1);
+}
+
+export function commitWorkbookImport(importId: string) {
+  return requestJson<WorkbookImportResult>(`/imports/xlsx/${importId}/commit`, {
+    method: 'POST',
+  }, 1);
 }

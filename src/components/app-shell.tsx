@@ -2,6 +2,7 @@ import { Href, router, usePathname } from 'expo-router';
 import {
     ChartNoAxesColumnIncreasing,
     CircleDollarSign,
+    FileUp,
     LayoutDashboard,
     Menu,
     Plus,
@@ -22,6 +23,7 @@ const navItems = [
   { label: 'Budget', href: '/budget' as Href, icon: WalletCards },
   { label: 'Insights', href: '/explore' as Href, icon: ChartNoAxesColumnIncreasing },
   { label: 'Goals', href: '/goals' as Href, icon: Target },
+  { label: 'Import', href: '/import' as Href, icon: FileUp },
 ];
 
 const mobileNavItems = [
@@ -32,7 +34,7 @@ const mobileNavItems = [
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { width } = useWindowDimensions();
-  const compact = width < 820;
+  const compact = width < 1040;
   const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
