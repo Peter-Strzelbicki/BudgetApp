@@ -1,6 +1,7 @@
 [Unit]
 Description=Budget API backend service
-After=network.target
+Wants=network-online.target
+After=network-online.target postgresql.service
 
 [Service]
 Type=simple
@@ -8,9 +9,7 @@ WorkingDirectory=/home/pstrzelbicki/BudgetApp/BudgetApp/src/server
 ExecStart=/usr/bin/node /home/pstrzelbicki/BudgetApp/BudgetApp/src/server/server.js
 Restart=on-failure
 RestartSec=5s
-Environment=DB_TYPE=postgres
-Environment=DB_CONNECTION_STRING=postgresql://admin:Password123@localhost:5432/homebudget
-Environment=PORT=3000
+EnvironmentFile=/home/pstrzelbicki/BudgetApp/BudgetApp/src/server/.env
 User=pstrzelbicki
 Group=pstrzelbicki
 StandardOutput=journal

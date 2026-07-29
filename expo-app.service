@@ -1,14 +1,14 @@
 [Unit]
-Description=BudgetApp Expo web dev server
-After=network.target
+Description=HomeBudget web application
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=simple
 WorkingDirectory=/home/pstrzelbicki/BudgetApp/BudgetApp
-ExecStart=/usr/bin/npm run web -- --host lan --port 8081
+ExecStart=/usr/bin/python3 /home/pstrzelbicki/BudgetApp/BudgetApp/scripts/serve-web.py --port 8081 --bind 0.0.0.0 --directory /home/pstrzelbicki/BudgetApp/BudgetApp/dist
 Restart=on-failure
 RestartSec=5s
-Environment=EXPO_NO_BROWSER=1
 User=pstrzelbicki
 Group=pstrzelbicki
 StandardOutput=journal
