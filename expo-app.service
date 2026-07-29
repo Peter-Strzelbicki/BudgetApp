@@ -4,13 +4,13 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/pi/BudgetApp/BudgetApp
-ExecStart=/usr/bin/npm run web -- --host 0.0.0.0 --port 8081
+WorkingDirectory=/home/pstrzelbicki/BudgetApp/BudgetApp
+ExecStart=/usr/bin/npm run web -- --host lan --port 8081
 Restart=on-failure
 RestartSec=5s
 Environment=EXPO_NO_BROWSER=1
-User=pi
-Group=pi
+User=pstrzelbicki
+Group=pstrzelbicki
 StandardOutput=journal
 StandardError=journal
 

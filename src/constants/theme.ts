@@ -9,11 +9,11 @@ import { Platform } from 'react-native';
 
 export const Colors = {
   light: {
-    text: '#000000',
-    background: '#ffffff',
-    backgroundElement: '#F0F0F3',
-    backgroundSelected: '#E0E1E6',
-    textSecondary: '#60646C',
+    text: '#172019',
+    background: '#F3F5F0',
+    backgroundElement: '#FFFFFF',
+    backgroundSelected: '#E2EDE6',
+    textSecondary: '#667069',
   },
   dark: {
     text: '#ffffff',
@@ -22,6 +22,23 @@ export const Colors = {
     backgroundSelected: '#2E3135',
     textSecondary: '#B0B4BA',
   },
+} as const;
+
+export const BudgetColors = {
+  canvas: '#F3F5F0',
+  surface: '#FFFFFF',
+  ink: '#172019',
+  muted: '#667069',
+  faint: '#8C958F',
+  line: '#DDE2DC',
+  green: '#236B53',
+  greenSoft: '#E2EDE6',
+  coral: '#C85B3F',
+  coralSoft: '#F7E5DF',
+  gold: '#D6A63A',
+  goldSoft: '#F8EFD7',
+  blue: '#3E6F8E',
+  blueSoft: '#E1EBF0',
 } as const;
 
 export type ThemeColor = keyof typeof Colors.light & keyof typeof Colors.dark;
@@ -62,4 +79,4 @@ export const Spacing = {
 } as const;
 
 export const BottomTabInset = Platform.select({ ios: 50, android: 80 }) ?? 0;
-export const MaxContentWidth = 800;
+export const MaxContentWidth = 1180;

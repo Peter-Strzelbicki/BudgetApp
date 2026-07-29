@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "budgetapp",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "light",
     "ios": {
       "icon": "./assets/expo.icon"
     },
@@ -22,7 +22,12 @@
     "web": {
       "output": "static",
       "favicon": "./assets/images/favicon.png",
-      "bundler": "metro"
+      "bundler": "metro",
+      "name": "HomeBudget",
+      "shortName": "HomeBudget",
+      "description": "A private household budget and spending ledger.",
+      "backgroundColor": "#F3F5F0",
+      "themeColor": "#236B53"
     },
     "plugins": [
       "expo-router",
@@ -36,7 +41,6 @@
       ]
     ],
     "experiments": {
-      "baseUrl": "/BudgetApp",
       "typedRoutes": true,
       "reactCompiler": true
     }

@@ -225,6 +225,33 @@ app.post("/transactions", async (req, res) => {
   }
 });
 
+app.delete("/transactions/:transactionId", async (req, res) => {
+  try {
+    const transactionId = Number(req.params.transactionId);
+    if (!Number.isInteger(transactionId)) {
+      return res.status(400).json({ error: "A valid transaction ID is required" });
+    }
+
+    const queryText = dbType === "postgres"
+      ? `DELETE FROM public.transactions
+         WHERE transaction_id = @transaction_id
+         RETURNING transaction_id`
+      : `DELETE FROM dbo.transactions
+         OUTPUT DELETED.transaction_id AS transaction_id
+         WHERE transaction_id = @transaction_id`;
+    const rows = await query(queryText, { transaction_id: transactionId });
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: "Transaction not found" });
+    }
+
+    res.json({ transaction_id: rows[0].transaction_id });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to delete transaction" });
+  }
+});
+
 app.get("/summary/monthly", async (req, res) => {
   try {
     const { year } = req.query;
@@ -252,6 +279,41 @@ app.get("/summary/monthly", async (req, res) => {
   }
 });
 
+app.get("/summary/categories", async (req, res) => {
+  try {
+    const { month, year } = req.query;
+    if (!month || !year) {
+      return res.status(400).json({ error: "month and year are required" });
+    }
+
+    const queryText = dbType === "postgres"
+      ? `SELECT c.category_id, c.name AS category, COALESCE(SUM(t.amount), 0) AS total
+         FROM public.categories c
+         LEFT JOIN public.subcategories sc ON sc.category_id = c.category_id
+         LEFT JOIN public.transactions t
+           ON t.subcategory_id = sc.subcategory_id
+          AND EXTRACT(MONTH FROM t.transaction_date) = @month
+          AND EXTRACT(YEAR FROM t.transaction_date) = @year
+         GROUP BY c.category_id, c.name, c.display_order
+         ORDER BY total DESC, c.display_order`
+      : `SELECT c.category_id, c.name AS category, COALESCE(SUM(t.amount), 0) AS total
+         FROM dbo.categories c
+         LEFT JOIN dbo.subcategories sc ON sc.category_id = c.category_id
+         LEFT JOIN dbo.transactions t
+           ON t.subcategory_id = sc.subcategory_id
+          AND MONTH(t.transaction_date) = @month
+          AND YEAR(t.transaction_date) = @year
+         GROUP BY c.category_id, c.name, c.display_order
+         ORDER BY total DESC, c.display_order`;
+
+    const rows = await query(queryText, { month: Number(month), year: Number(year) });
+    res.json(rows);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to fetch category summary" });
+  }
+});
+
 app.get("/budget-lines", async (req, res) => {
   try {
     const { month, year } = req.query;
@@ -260,26 +322,115 @@ app.get("/budget-lines", async (req, res) => {
     }
 
     const queryText = dbType === "postgres"
-      ? `SELECT bl.subcategory_id, sc.name AS subcategory, c.name AS category,
-               bl.projected_amount, bl.actual_amount
-         FROM public.budget_lines bl
-         JOIN public.subcategories sc ON sc.subcategory_id = bl.subcategory_id
+      ? `SELECT sc.subcategory_id, sc.name AS subcategory, c.name AS category,
+               COALESCE(bl.projected_amount, 0) AS projected_amount,
+               COALESCE(SUM(t.amount), 0) AS actual_amount
+         FROM public.subcategories sc
          JOIN public.categories c ON c.category_id = sc.category_id
-         JOIN public.budget_periods bp ON bp.period_id = bl.period_id
-         WHERE bp.month = @month AND bp.year = @year`
-      : `SELECT bl.subcategory_id, sc.name AS subcategory, c.name AS category,
-               bl.projected_amount, bl.actual_amount
-         FROM dbo.budget_lines bl
-         JOIN dbo.subcategories sc ON sc.subcategory_id = bl.subcategory_id
+         LEFT JOIN public.budget_periods bp ON bp.month = @month AND bp.year = @year
+         LEFT JOIN public.budget_lines bl
+           ON bl.period_id = bp.period_id AND bl.subcategory_id = sc.subcategory_id
+         LEFT JOIN public.transactions t
+           ON t.subcategory_id = sc.subcategory_id
+          AND EXTRACT(MONTH FROM t.transaction_date) = @month
+          AND EXTRACT(YEAR FROM t.transaction_date) = @year
+         GROUP BY sc.subcategory_id, sc.name, sc.display_order, c.name, c.display_order,
+                  bl.projected_amount
+         ORDER BY c.display_order, sc.display_order`
+      : `SELECT sc.subcategory_id, sc.name AS subcategory, c.name AS category,
+               COALESCE(bl.projected_amount, 0) AS projected_amount,
+               COALESCE(SUM(t.amount), 0) AS actual_amount
+         FROM dbo.subcategories sc
          JOIN dbo.categories c ON c.category_id = sc.category_id
-         JOIN dbo.budget_periods bp ON bp.period_id = bl.period_id
-         WHERE bp.month = @month AND bp.year = @year`;
+         LEFT JOIN dbo.budget_periods bp ON bp.month = @month AND bp.year = @year
+         LEFT JOIN dbo.budget_lines bl
+           ON bl.period_id = bp.period_id AND bl.subcategory_id = sc.subcategory_id
+         LEFT JOIN dbo.transactions t
+           ON t.subcategory_id = sc.subcategory_id
+          AND MONTH(t.transaction_date) = @month
+          AND YEAR(t.transaction_date) = @year
+         GROUP BY sc.subcategory_id, sc.name, sc.display_order, c.name, c.display_order,
+                  bl.projected_amount
+         ORDER BY c.display_order, sc.display_order`;
 
     const rows = await query(queryText, { month: Number(month), year: Number(year) });
     res.json(rows);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Failed to fetch budget lines" });
+  }
+});
+
+app.put("/budget-lines/:subcategoryId", async (req, res) => {
+  try {
+    const subcategoryId = Number(req.params.subcategoryId);
+    const month = Number(req.body.month);
+    const year = Number(req.body.year);
+    const projectedAmount = Number(req.body.projected_amount);
+
+    if (!Number.isInteger(subcategoryId) || !Number.isInteger(month) || month < 1 || month > 12 ||
+        !Number.isInteger(year) || !Number.isFinite(projectedAmount) || projectedAmount < 0) {
+      return res.status(400).json({ error: "Valid subcategory, month, year, and projected amount are required" });
+    }
+
+    if (dbType === "postgres") {
+      const rows = await query(
+        `WITH period AS (
+           INSERT INTO public.budget_periods (year, month)
+           VALUES (@year, @month)
+           ON CONFLICT (year, month) DO UPDATE SET year = EXCLUDED.year
+           RETURNING period_id
+         )
+         INSERT INTO public.budget_lines (period_id, subcategory_id, projected_amount)
+         SELECT period_id, @subcategory_id, @projected_amount FROM period
+         ON CONFLICT (period_id, subcategory_id)
+         DO UPDATE SET projected_amount = EXCLUDED.projected_amount
+         RETURNING subcategory_id, projected_amount`,
+        {
+          year,
+          month,
+          subcategory_id: subcategoryId,
+          projected_amount: projectedAmount,
+        }
+      );
+      return res.json(rows[0]);
+    }
+
+    const db = await getDb();
+    const transaction = new mssql.Transaction(db);
+    await transaction.begin();
+    try {
+      const periodRequest = new mssql.Request(transaction);
+      periodRequest.input("year", mssql.SmallInt, year);
+      periodRequest.input("month", mssql.SmallInt, month);
+      const periodResult = await periodRequest.query(`
+        IF NOT EXISTS (SELECT 1 FROM dbo.budget_periods WHERE year = @year AND month = @month)
+          INSERT INTO dbo.budget_periods (year, month) VALUES (@year, @month);
+        SELECT period_id FROM dbo.budget_periods WHERE year = @year AND month = @month;
+      `);
+      const periodId = periodResult.recordset[0].period_id;
+
+      const lineRequest = new mssql.Request(transaction);
+      lineRequest.input("period_id", mssql.Int, periodId);
+      lineRequest.input("subcategory_id", mssql.Int, subcategoryId);
+      lineRequest.input("projected_amount", mssql.Decimal(10, 2), projectedAmount);
+      await lineRequest.query(`
+        IF EXISTS (SELECT 1 FROM dbo.budget_lines WHERE period_id = @period_id AND subcategory_id = @subcategory_id)
+          UPDATE dbo.budget_lines SET projected_amount = @projected_amount
+          WHERE period_id = @period_id AND subcategory_id = @subcategory_id;
+        ELSE
+          INSERT INTO dbo.budget_lines (period_id, subcategory_id, projected_amount)
+          VALUES (@period_id, @subcategory_id, @projected_amount);
+      `);
+      await transaction.commit();
+      return res.json({ subcategory_id: subcategoryId, projected_amount: projectedAmount });
+    } catch (error) {
+      await transaction.rollback();
+      throw error;
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to save budget line" });
   }
 });
 
@@ -355,10 +506,12 @@ app.get("/goals", async (req, res) => {
     const queryText = dbType === "postgres"
       ? `SELECT goal_id, year, description
          FROM public.goals
-         WHERE year = @year`
+        WHERE year = @year
+        ORDER BY goal_id DESC`
       : `SELECT goal_id, year, description
          FROM dbo.goals
-         WHERE year = @year`;
+        WHERE year = @year
+        ORDER BY goal_id DESC`;
 
     const rows = await query(queryText, { year: Number(year) });
     res.json(rows);
@@ -402,6 +555,29 @@ app.post("/goals", async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Failed to add goal" });
+  }
+});
+
+app.delete("/goals/:goalId", async (req, res) => {
+  try {
+    const goalId = Number(req.params.goalId);
+    if (!Number.isInteger(goalId)) {
+      return res.status(400).json({ error: "A valid goal ID is required" });
+    }
+
+    const queryText = dbType === "postgres"
+      ? `DELETE FROM public.goals WHERE goal_id = @goal_id RETURNING goal_id`
+      : `DELETE FROM dbo.goals OUTPUT DELETED.goal_id AS goal_id WHERE goal_id = @goal_id`;
+    const rows = await query(queryText, { goal_id: goalId });
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: "Goal not found" });
+    }
+
+    res.json({ goal_id: rows[0].goal_id });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to delete goal" });
   }
 });
 

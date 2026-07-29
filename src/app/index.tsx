@@ -1,27 +1,29 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Platform,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  useWindowDimensions,
-  View,
+    Platform,
+    Pressable,
+    RefreshControl,
+    ScrollView,
+    StyleSheet,
+    Text,
+    useWindowDimensions,
+    View,
 } from 'react-native';
 
 import { router } from 'expo-router';
 
 import {
-  BarChart
+    BarChart
 } from 'react-native-gifted-charts';
 
 import { getMonthlySummary } from '../constants/api';
 
+export { default } from '@/components/screens/dashboard-screen';
+
 const MONTH_LABELS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const MONTHLY_BUDGET = 3500;
 
-export default function HomeScreen() {
+function LegacyHomeScreen() {
   const { width } = useWindowDimensions();
   // Use a minimum of 1000px for static export, otherwise use actual window width
   const displayWidth = width > 0 ? width : 1000;

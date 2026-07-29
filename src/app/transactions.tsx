@@ -1,4 +1,5 @@
 import { getTransactions } from '@/constants/api';
+export { default } from '@/components/screens/transactions-screen';
 import { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
@@ -20,7 +21,7 @@ interface Transaction {
   paid_by: string | null;
 }
 
-export default function Transactions() {
+function LegacyTransactions() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [month, setMonth] = useState(new Date().getMonth() + 1);

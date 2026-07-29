@@ -1,4 +1,5 @@
 import { addTransaction, getCategories, getPeople, getSubcategories } from '@/constants/api';
+export { default } from '@/components/screens/add-transaction-screen';
 import { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
@@ -30,7 +31,7 @@ interface Person {
   is_household: boolean;
 }
 
-export default function AddTransaction() {
+function LegacyAddTransaction() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [subcategories, setSubcategories] = useState<Subcategory[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
