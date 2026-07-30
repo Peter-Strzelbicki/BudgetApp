@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, Pressable, StyleProp, StyleSheet, Text, TextInput, useWindowDimensions, View, ViewStyle } from 'react-native';
 
 import { EmptyState, ErrorNotice, formatCurrency, Panel, SectionHeader } from '@/components/budget-ui';
+import { DateInput } from '@/components/date-input';
 import { addPaycheck, deletePaycheck, getPaychecks, getPeople, Paycheck, Person } from '@/constants/api';
 import { BudgetColors, Fonts } from '@/constants/theme';
 
@@ -117,7 +118,7 @@ export function PaycheckPanel({ month, year, onChanged, style }: {
             </View>
             <View style={styles.formField}>
               <View style={styles.labelRow}><CalendarDays color={BudgetColors.muted} size={15} /><Text style={styles.label}>Pay date</Text></View>
-              <TextInput value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" placeholderTextColor={BudgetColors.faint} style={styles.dateInput} />
+              <DateInput value={date} onChange={setDate} />
             </View>
             <Pressable disabled={saving} onPress={create} style={({ pressed }) => [styles.addButton, saving && styles.disabled, pressed && styles.pressed]}>
               {saving ? <ActivityIndicator color={BudgetColors.surface} size="small" /> : <Plus color={BudgetColors.surface} size={17} />}

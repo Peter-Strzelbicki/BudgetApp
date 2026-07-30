@@ -4,7 +4,6 @@ import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, TextIn
 
 import { ErrorNotice, formatCurrency, MonthSwitcher, moveMonth, Page, PageHeading, Panel, SectionHeader, StatCard } from '@/components/budget-ui';
 import { ContributionPanel } from '@/components/contribution-panel';
-import { PaycheckPanel } from '@/components/paycheck-panel';
 import { BudgetLine, Category, ContributionSummary, createSubcategory, deleteSubcategory, getBudgetLines, getCategories, getContributionSummary, saveBudgetLine } from '@/constants/api';
 import { BudgetColors, Fonts } from '@/constants/theme';
 
@@ -177,7 +176,7 @@ export default function BudgetScreen() {
         <StatCard label={remaining >= 0 ? 'Remaining' : 'Over plan'} value={formatCurrency(Math.abs(remaining))} detail={planned > 0 ? `${Math.round(actual / planned * 100)}% used` : 'Enter a plan below'} accent={remaining >= 0 ? BudgetColors.gold : BudgetColors.coral} />
       </View>
       <View style={[styles.contributionGrid, contributionCompact && styles.contributionGridCompact]}>
-        <PaycheckPanel month={month} year={year} onChanged={refreshContribution} style={contributionCompact && styles.contributionPanelCompact} />
+        <IncomePanel contribution={contribution} compact={contributionCompact} />
         <ContributionPanel summary={contribution} style={[styles.contributionPanel, contributionCompact && styles.contributionPanelCompact]} />
       </View>
       <View style={styles.toolbar}>
@@ -277,12 +276,50 @@ export default function BudgetScreen() {
   );
 }
 
+function IncomePanel({ contribution, compact }: { contribution: ContributionSummary | null; compact: boolean }) {
+  if (!contribution || contribution.household_income <= 0) return null;
+  return (
+    <Panel style={compact ? styles.incomePanelCompact : styles.incomePanel}>
+      <SectionHeader title="Household income" detail="Bi-weekly pay · monthly equivalent" />
+      {contribution.people.map((person, index) => (
+        <View key={person.person_id} style={[styles.incomeRow, index === 0 && styles.incomeRowFirst]}>
+          <View style={styles.incomeCopy}>
+            <Text style={styles.incomeName}>{person.name}</Text>
+            <Text style={styles.incomeDetail}>{formatCurrency(person.biweekly_amount, 2)}/pay</Text>
+          </View>
+          <View style={styles.incomeRight}>
+            <Text style={styles.incomeMonthly}>{formatCurrency(person.income, 2)}</Text>
+            <Text style={styles.incomePct}>{person.income_percentage.toFixed(1)}%</Text>
+          </View>
+        </View>
+      ))}
+      <View style={styles.incomeDivider} />
+      <View style={styles.incomeRow}>
+        <Text style={[styles.incomeName, styles.incomeTotal]}>Household total</Text>
+        <Text style={[styles.incomeMonthly, styles.incomeTotal]}>{formatCurrency(contribution.household_income, 2)}</Text>
+      </View>
+    </Panel>
+  );
+}
+
 const styles = StyleSheet.create({
   stats: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
   contributionGrid: { flexDirection: 'row', alignItems: 'stretch', gap: 16 },
   contributionGridCompact: { flexDirection: 'column' },
   contributionPanel: { flex: 1, minWidth: 0 },
   contributionPanelCompact: { flexGrow: 0, flexShrink: 0, flexBasis: 'auto' },
+  incomePanel: { flex: 0.6, minWidth: 0 },
+  incomePanelCompact: { flexGrow: 0, flexShrink: 0, flexBasis: 'auto' },
+  incomeRow: { minHeight: 56, flexDirection: 'row', alignItems: 'center', gap: 12, borderTopWidth: 1, borderTopColor: BudgetColors.line },
+  incomeRowFirst: { borderTopWidth: 0 },
+  incomeCopy: { flex: 1, gap: 2 },
+  incomeName: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 13, fontWeight: '800' },
+  incomeDetail: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 10 },
+  incomeRight: { alignItems: 'flex-end', gap: 2 },
+  incomeMonthly: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 13, fontWeight: '800' },
+  incomePct: { color: BudgetColors.blue, fontFamily: Fonts.sans, fontSize: 10, fontWeight: '800' },
+  incomeDivider: { height: 1, backgroundColor: BudgetColors.line, marginVertical: 2 },
+  incomeTotal: { fontWeight: '800', fontSize: 14 },
   notice: { padding: 12, borderRadius: 7, backgroundColor: BudgetColors.greenSoft, borderWidth: 1, borderColor: BudgetColors.successLine },
   noticeText: { color: BudgetColors.green, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '700' },
   toolbar: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, flexWrap: 'wrap' },

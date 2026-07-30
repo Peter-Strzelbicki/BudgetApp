@@ -72,12 +72,23 @@ export interface ContributionPerson {
   person_id: number;
   name: string;
   biweekly_amount: number;
+  extra_income: number;
   income: number;
   income_percentage: number;
   monthly_share: number;
   paid_personally: number;
   transfer_due: number;
   credit: number;
+}
+
+export interface ExtraIncome {
+  extra_income_id: number;
+  person_id: number;
+  person_name: string;
+  month: number;
+  year: number;
+  amount: number;
+  description: string | null;
 }
 
 export interface ContributionSummary {
@@ -412,6 +423,7 @@ export async function getContributionSummary(month: number, year: number): Promi
       ...person,
       person_id: Number(person.person_id),
       biweekly_amount: Number(person.biweekly_amount),
+      extra_income: Number((person as { extra_income?: number | string }).extra_income ?? 0),
       income: Number(person.income),
       income_percentage: Number(person.income_percentage),
       monthly_share: Number(person.monthly_share),
@@ -432,6 +444,22 @@ export function saveIncomeConfig(personId: number, biweeklyAmount: number) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ biweekly_amount: biweeklyAmount }),
   }, 1);
+}
+
+export function getExtraIncome(month: number, year: number) {
+  return requestJson<ExtraIncome[]>(`/extra-income?month=${month}&year=${year}`);
+}
+
+export function addExtraIncome(data: { person_id: number; month: number; year: number; amount: number; description?: string }) {
+  return requestJson<{ extra_income_id: number }>('/extra-income', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  }, 1);
+}
+
+export function deleteExtraIncome(extraIncomeId: number) {
+  return requestJson<{ extra_income_id: number }>(`/extra-income/${extraIncomeId}`, { method: 'DELETE' }, 1);
 }
 
 export async function getCategorySummary(month: number, year: number): Promise<CategorySummary[]> {
@@ -486,6 +514,69 @@ export function addGoal(year: number, description: string) {
 
 export function deleteGoal(goalId: number) {
   return requestJson<{ goal_id: number }>(`/goals/${goalId}`, { method: 'DELETE' });
+}
+
+export interface RecurringTransaction {
+  recurring_id: number;
+  subcategory_id: number;
+  subcategory: string;
+  category: string;
+  amount: number;
+  location: string | null;
+  paid_by_person_id: number | null;
+  paid_by: string | null;
+  notes: string | null;
+  day_of_month: number;
+  is_active: boolean;
+}
+
+export function getRecurringTransactions() {
+  return requestJson<RecurringTransaction[]>('/recurring-transactions');
+}
+
+export function getPendingRecurring(month: number, year: number) {
+  return requestJson<{ pending: number }>(`/recurring-transactions/pending?month=${month}&year=${year}`);
+}
+
+export function createRecurringTransaction(data: {
+  subcategory_id: number;
+  amount: number;
+  location?: string;
+  paid_by_person_id?: number;
+  notes?: string;
+  day_of_month?: number;
+}) {
+  return requestJson<{ recurring_id: number }>('/recurring-transactions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  }, 1);
+}
+
+export function updateRecurringTransaction(recurringId: number, data: {
+  amount: number;
+  location?: string;
+  paid_by_person_id?: number;
+  notes?: string;
+  day_of_month?: number;
+}) {
+  return requestJson<{ recurring_id: number }>(`/recurring-transactions/${recurringId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  }, 1);
+}
+
+export function deleteRecurringTransaction(recurringId: number) {
+  return requestJson<{ recurring_id: number }>(`/recurring-transactions/${recurringId}`, { method: 'DELETE' }, 1);
+}
+
+export function applyRecurringTransactions(month: number, year: number) {
+  return requestJson<{ applied: number; transactions_created: number[] }>('/recurring-transactions/apply', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ month, year }),
+  }, 1);
 }
 
 export function previewWorkbookImport(asset: DocumentPickerAsset) {

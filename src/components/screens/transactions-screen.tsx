@@ -1,10 +1,10 @@
 import { useFocusEffect, router } from 'expo-router';
-import { MapPin, Pencil, Plus, ReceiptText, Search, Trash2, UserRound } from 'lucide-react-native';
+import { MapPin, Pencil, Plus, ReceiptText, Repeat, Search, Trash2, UserRound } from 'lucide-react-native';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 
 import { EmptyState, ErrorNotice, formatCurrency, MonthSwitcher, moveMonth, Page, PageHeading, Panel, SectionHeader, StatCard } from '@/components/budget-ui';
-import { deleteTransaction, getTransactions, Transaction } from '@/constants/api';
+import { applyRecurringTransactions, deleteTransaction, getPendingRecurring, getTransactions, Transaction } from '@/constants/api';
 import { BudgetColors, Fonts } from '@/constants/theme';
 
 export default function TransactionsScreen() {
@@ -17,10 +17,19 @@ export default function TransactionsScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [pendingRecurring, setPendingRecurring] = useState(0);
+  const [applying, setApplying] = useState(false);
 
   const load = async () => {
     setLoading(true); setError(null);
-    try { setTransactions(await getTransactions(month, year)); }
+    try {
+      const [txRows, pending] = await Promise.all([
+        getTransactions(month, year),
+        getPendingRecurring(month, year),
+      ]);
+      setTransactions(txRows);
+      setPendingRecurring(pending.pending);
+    }
     catch (loadError) { setError(loadError instanceof Error ? loadError.message : 'Transactions could not be loaded.'); }
     finally { setLoading(false); }
   };
@@ -44,6 +53,19 @@ export default function TransactionsScreen() {
     } finally { setDeletingId(null); }
   };
 
+  const applyRecurring = async () => {
+    setApplying(true); setError(null);
+    try {
+      const result = await applyRecurringTransactions(month, year);
+      if (result.applied > 0) {
+        const [txRows, pending] = await Promise.all([getTransactions(month, year), getPendingRecurring(month, year)]);
+        setTransactions(txRows); setPendingRecurring(pending.pending);
+      }
+    } catch (applyError) {
+      setError(applyError instanceof Error ? applyError.message : 'Could not apply recurring transactions.');
+    } finally { setApplying(false); }
+  };
+
   const normalizedQuery = query.trim().toLowerCase();
   const filtered = transactions.filter(transaction => !normalizedQuery || [transaction.location, transaction.category, transaction.subcategory, transaction.paid_by, transaction.notes].some(value => value?.toLowerCase().includes(normalizedQuery)));
   const total = transactions.reduce((sum, transaction) => sum + transaction.amount, 0);
@@ -52,6 +74,15 @@ export default function TransactionsScreen() {
   return <Page>
     <PageHeading eyebrow="Ledger" title="Transactions" description="Search, review, and maintain the household spending record." action={<Pressable onPress={() => router.push('/add-transaction')} style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}><Plus color={BudgetColors.surface} size={17} /><Text style={styles.primaryText}>Add transaction</Text></Pressable>} />
     {error && <ErrorNotice message={error} onRetry={load} />}
+    {pendingRecurring > 0 && (
+      <Pressable disabled={applying} onPress={applyRecurring} style={({ pressed }) => [styles.recurringBanner, applying && styles.disabled, pressed && styles.pressed]}>
+        <Repeat color={BudgetColors.green} size={17} />
+        <Text style={styles.recurringBannerText}>
+          {applying ? 'Applying…' : `Apply ${pendingRecurring} recurring transaction${pendingRecurring === 1 ? '' : 's'} for this month`}
+        </Text>
+        {applying && <ActivityIndicator color={BudgetColors.green} size="small" />}
+      </Pressable>
+    )}
     <View style={styles.controls}>
       <MonthSwitcher month={month} year={year} onPrevious={() => changeMonth(-1)} onNext={() => changeMonth(1)} />
       <View style={styles.searchWrap}><Search color={BudgetColors.muted} size={17} /><TextInput value={query} onChangeText={setQuery} placeholder="Search transactions" placeholderTextColor={BudgetColors.faint} style={styles.searchInput} /></View>
@@ -94,7 +125,9 @@ function confirmRemoval(transaction: Transaction) {
 
 const styles = StyleSheet.create({
   primaryButton: { height: 42, paddingHorizontal: 15, borderRadius: 8, backgroundColor: BudgetColors.green, flexDirection: 'row', alignItems: 'center', gap: 7 },
-  primaryText: { color: BudgetColors.surface, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' }, pressed: { opacity: 0.68 },
+  primaryText: { color: BudgetColors.surface, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' }, pressed: { opacity: 0.68 }, disabled: { opacity: 0.6 },
+  recurringBanner: { minHeight: 46, paddingHorizontal: 14, borderRadius: 8, borderWidth: 1, borderColor: BudgetColors.green, backgroundColor: BudgetColors.greenSoft, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  recurringBannerText: { flex: 1, color: BudgetColors.green, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' },
   controls: { flexDirection: 'row', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' },
   searchWrap: { height: 42, minWidth: 240, flex: 1, maxWidth: 390, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: BudgetColors.line, borderRadius: 8, backgroundColor: BudgetColors.surface },
   searchInput: { flex: 1, height: 40, color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 13 },

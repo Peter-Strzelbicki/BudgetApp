@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 
 import { ErrorNotice, Page, PageHeading, Panel, SectionHeader } from '@/components/budget-ui';
+import { DateInput } from '@/components/date-input';
 import { addTransaction, Category, getCategories, getPeople, getSubcategories, getTransaction, Person, Subcategory, updateTransaction } from '@/constants/api';
 import { BudgetColors, Fonts } from '@/constants/theme';
 
@@ -90,7 +91,7 @@ export default function AddTransactionScreen() {
   return <Page>
     <PageHeading eyebrow={editing ? 'Ledger entry' : 'New entry'} title={editing ? 'Edit transaction' : 'Record a transaction'} description={editing ? 'Update the expense details, classification, or payer.' : 'Add an expense to the household ledger and monthly totals.'} />
     {error && <ErrorNotice message={error} onRetry={loading ? loadReferenceData : undefined} />}
-    {success && <View style={styles.success}><CheckCircle2 color={BudgetColors.green} size={20} /><View style={styles.successCopy}><Text style={styles.successTitle}>{editing ? 'Transaction updated' : 'Transaction recorded'}</Text><Text style={styles.successDetail}>The dashboard and monthly ledger now include these details.</Text></View><Pressable onPress={() => router.replace('/transactions')}><Text style={styles.successLink}>View ledger</Text></Pressable></View>}
+    {success && <View style={styles.success}><CheckCircle2 color={BudgetColors.green} size={20} /><View style={styles.successCopy}><Text style={styles.successTitle}>{editing ? 'Transaction updated' : 'Transaction recorded'}</Text><Text style={styles.successDetail}>The dashboard and monthly ledger now include these details.</Text></View><Pressable onPress={() => editing ? router.back() : router.replace('/transactions')}><Text style={styles.successLink}>{editing ? 'Back to ledger' : 'View ledger'}</Text></Pressable></View>}
     {loading ? <View style={styles.loader}><ActivityIndicator color={BudgetColors.green} size="large" /></View> : <>
       <Panel>
         <SectionHeader title="Classification" detail="Choose where this expense belongs" />
@@ -102,7 +103,9 @@ export default function AddTransactionScreen() {
         <Panel style={styles.column}>
           <SectionHeader title="Expense details" detail="Amount, date, and merchant" />
           <Field icon={<ReceiptText color={BudgetColors.muted} size={17} />} label="Amount" required><View style={styles.amountInput}><Text style={styles.dollar}>$</Text><TextInput value={amount} onChangeText={value => setAmount(value.replace(/[^0-9.]/g, ''))} placeholder="0.00" placeholderTextColor={BudgetColors.faint} keyboardType="decimal-pad" style={styles.flexInput} /></View></Field>
-          <Field icon={<CalendarDays color={BudgetColors.muted} size={17} />} label="Date" required><TextInput value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" placeholderTextColor={BudgetColors.faint} style={styles.input} /></Field>
+          <Field icon={<CalendarDays color={BudgetColors.muted} size={17} />} label="Date" required>
+            <DateInput value={date} onChange={setDate} />
+          </Field>
           <Field icon={<MapPin color={BudgetColors.muted} size={17} />} label="Location"><TextInput value={location} onChangeText={setLocation} placeholder="Store or merchant" placeholderTextColor={BudgetColors.faint} maxLength={100} style={styles.input} /></Field>
         </Panel>
         <Panel style={styles.column}>

@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import { ArrowRight, CircleDollarSign, Landmark, ReceiptText, WalletCards } from 'lucide-react-native';
+import { ArrowRight, Landmark, ReceiptText, WalletCards } from 'lucide-react-native';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, RefreshControl, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
@@ -103,7 +103,9 @@ export default function DashboardScreen() {
   const yearSpend = totalsByMonth.reduce((sum, total) => sum + total, 0);
   const planned = budgetLines.reduce((sum, line) => sum + line.projected_amount, 0);
   const remaining = planned - monthSpend;
-  const topCategory = categories.find(category => category.total > 0);
+  const monthlyIncome = contribution?.household_income ?? 0;
+  const incomeRemaining = monthlyIncome - monthSpend;
+  const spendPct = monthlyIncome > 0 ? Math.min(monthSpend / monthlyIncome * 100, 100) : 0;
   const maxMonth = Math.max(...totalsByMonth, 1);
   const maxCategory = Math.max(...categories.map(category => category.total), 1);
   const maxYtdAverage = Math.max(...(ytd?.category_averages.map(category => category.monthly_average) || []), 1);
@@ -123,7 +125,6 @@ export default function DashboardScreen() {
             onPrevious={() => selectYear(year - 1)}
             onNext={() => selectYear(year + 1)}
           />
-          <ActionButton label="Record expense" onPress={() => router.push('/add-transaction')} />
         </View>}
       />
       {error && <ErrorNotice message={error} onRetry={() => load()} />}
@@ -134,8 +135,27 @@ export default function DashboardScreen() {
             <StatCard label={`${selectedMonthName} spending`} value={formatCurrency(monthSpend)} detail={`${transactions.length} recorded transaction${transactions.length === 1 ? '' : 's'}`} icon={<ReceiptText color={BudgetColors.coral} size={19} />} accent={BudgetColors.coral} />
             <StatCard label={`${selectedMonthName} plan`} value={formatCurrency(planned)} detail={planned > 0 ? `${formatCurrency(Math.abs(remaining))} ${remaining >= 0 ? 'under plan' : 'over plan'}` : 'No plan entered'} icon={<WalletCards color={BudgetColors.green} size={19} />} />
             <StatCard label={`${year} YTD spending`} value={formatCurrency(yearSpend)} detail={`${formatCurrency(yearSpend / Math.max(ytd?.months_elapsed || currentMonth, 1))} monthly average`} icon={<Landmark color={BudgetColors.blue} size={19} />} accent={BudgetColors.blue} />
-            <StatCard label={`${selectedMonthName} leader`} value={topCategory?.category ?? 'No spending'} detail={topCategory ? formatCurrency(topCategory.total) : 'Nothing recorded'} icon={<CircleDollarSign color={BudgetColors.gold} size={19} />} accent={BudgetColors.gold} />
           </View>
+
+          {monthlyIncome > 0 && (
+            <View style={styles.incomeBarPanel}>
+              <View style={styles.incomeBarHeader}>
+                <Text style={styles.incomeBarTitle}>Monthly income</Text>
+                <Text style={styles.incomeBarTotal}>{formatCurrency(monthlyIncome, 2)}</Text>
+              </View>
+              <View style={styles.incomeTrack}>
+                <View style={[styles.incomeFill, { width: `${spendPct}%` }, monthSpend > monthlyIncome && styles.incomeFillOver]} />
+              </View>
+              <View style={styles.incomeBarFooter}>
+                <Text style={styles.incomeSpent}>{formatCurrency(monthSpend, 2)} spent</Text>
+                <Text style={[styles.incomeLeft, incomeRemaining < 0 && styles.incomeOver]}>
+                  {incomeRemaining >= 0
+                    ? `${formatCurrency(incomeRemaining, 2)} remaining`
+                    : `${formatCurrency(Math.abs(incomeRemaining), 2)} over income`}
+                </Text>
+              </View>
+            </View>
+          )}
 
           <ContributionPanel summary={contribution} action={<TextLink label="Manage income" onPress={() => router.push('/budget')} />} />
 
@@ -179,31 +199,6 @@ export default function DashboardScreen() {
           </View>
 
           <View style={[styles.twoColumn, compact && styles.oneColumn]}>
-            <Panel style={styles.ytdCategoryPanel}>
-              <SectionHeader
-                title={`${year} category averages`}
-                detail={`Average monthly spend across ${ytd?.months_elapsed || 0} month${ytd?.months_elapsed === 1 ? '' : 's'}`}
-              />
-              {!ytd || ytd.category_averages.every(category => category.total === 0) ? (
-                <EmptyState title="No YTD activity" detail="Category averages will appear as transactions are recorded." />
-              ) : (
-                <View style={styles.ytdCategoryList}>
-                  {ytd.category_averages.filter(category => category.total > 0).map(category => (
-                    <View key={category.category_id} style={styles.ytdCategoryRow}>
-                      <View style={styles.ytdCategoryHeader}>
-                        <Text style={styles.ytdCategoryName}>{category.category}</Text>
-                        <Text style={styles.ytdCategoryAverage}>{formatCurrency(category.monthly_average)} / month</Text>
-                      </View>
-                      <View style={styles.ytdProgressTrack}>
-                        <View style={[styles.ytdProgressFill, { width: `${Math.max(3, category.monthly_average / maxYtdAverage * 100)}%` }]} />
-                      </View>
-                      <Text style={styles.ytdCategoryTotal}>{formatCurrency(category.total)} spent YTD</Text>
-                    </View>
-                  ))}
-                </View>
-              )}
-            </Panel>
-
             <Panel style={styles.variancePanel}>
               <SectionHeader title="Monthly budget check" detail="Actual spending compared with each month's plan" />
               {!ytd || ytd.monthly_variance.length === 0 ? (
@@ -250,12 +245,6 @@ export default function DashboardScreen() {
   );
 }
 
-function ActionButton({ label, onPress }: { label: string; onPress: () => void }) {
-  return <Pressable onPress={onPress} style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}>
-    <ReceiptText color={BudgetColors.surface} size={17} /><Text style={styles.primaryButtonText}>{label}</Text>
-  </Pressable>;
-}
-
 function TextLink({ label, onPress }: { label: string; onPress: () => void }) {
   return <Pressable onPress={onPress} style={styles.inlineAction}><Text style={styles.inlineActionText}>{label}</Text><ArrowRight color={BudgetColors.green} size={15} /></Pressable>;
 }
@@ -269,6 +258,17 @@ const styles = StyleSheet.create({
   monthLoading: { minHeight: 38, paddingHorizontal: 12, borderRadius: 7, backgroundColor: BudgetColors.greenSoft, flexDirection: 'row', alignItems: 'center', gap: 8 },
   monthLoadingText: { color: BudgetColors.green, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '800' },
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  incomeBarPanel: { padding: 20, borderRadius: 8, backgroundColor: BudgetColors.surface, borderWidth: 1, borderColor: BudgetColors.line },
+  incomeBarHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
+  incomeBarTitle: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '800' },
+  incomeBarTotal: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '800' },
+  incomeTrack: { height: 16, borderRadius: 8, backgroundColor: BudgetColors.canvas, overflow: 'hidden', marginBottom: 10 },
+  incomeFill: { height: 16, borderRadius: 8, backgroundColor: BudgetColors.green },
+  incomeFillOver: { backgroundColor: BudgetColors.coral },
+  incomeBarFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  incomeSpent: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '700' },
+  incomeLeft: { color: BudgetColors.green, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '800' },
+  incomeOver: { color: BudgetColors.coral },
   twoColumn: { flexDirection: 'row', alignItems: 'stretch', gap: 16 },
   oneColumn: { flexDirection: 'column' },
   chartPanel: { flex: 1.45, minWidth: 0 },

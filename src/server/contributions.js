@@ -1,4 +1,4 @@
-const DEFAULT_PAY_PERIODS = 2;
+﻿const DEFAULT_PAY_PERIODS = 2;
 
 function roundMoney(value) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
@@ -7,6 +7,7 @@ function roundMoney(value) {
 function calculateContributionSummary({
   people,
   incomeConfig,
+  extraIncome = [],
   personalExpenses,
   plannedExpenses,
   payPeriods = DEFAULT_PAY_PERIODS,
@@ -16,16 +17,21 @@ function calculateContributionSummary({
     biweeklyByPerson.set(Number(config.person_id), Number(config.biweekly_amount));
   }
 
+  const extraByPerson = new Map();
+  for (const extra of extraIncome) {
+    const personId = Number(extra.person_id);
+    extraByPerson.set(personId, (extraByPerson.get(personId) || 0) + Number(extra.amount));
+  }
+
   const expensesByPerson = new Map();
   for (const expense of personalExpenses) {
     const personId = Number(expense.person_id);
     expensesByPerson.set(personId, (expensesByPerson.get(personId) || 0) + Number(expense.amount));
   }
 
-  // Monthly income = biweekly × payPeriods (default 2)
   const monthlyByPerson = new Map();
   for (const [personId, biweekly] of biweeklyByPerson) {
-    monthlyByPerson.set(personId, biweekly * payPeriods);
+    monthlyByPerson.set(personId, biweekly * payPeriods + (extraByPerson.get(personId) || 0));
   }
 
   const householdIncome = Array.from(monthlyByPerson.values()).reduce((sum, amount) => sum + amount, 0);
@@ -38,17 +44,18 @@ function calculateContributionSummary({
     people: people.map(person => {
       const personId = Number(person.person_id);
       const biweekly = biweeklyByPerson.get(personId) || 0;
-      const monthlyIncome = biweekly * payPeriods;
+      const extra = extraByPerson.get(personId) || 0;
+      const monthlyIncome = biweekly * payPeriods + extra;
       const incomeShare = householdIncome > 0 ? monthlyIncome / householdIncome : 0;
       const monthlyShare = monthlyExpenses * incomeShare;
       const paidPersonally = expensesByPerson.get(personId) || 0;
-      // Per-paycheck obligation = monthly_share / pay_periods (= Excel: (income_pct * planned) / 2)
       const transferBeforeCredit = monthlyShare / payPeriods;
 
       return {
         person_id: personId,
         name: person.name,
         biweekly_amount: roundMoney(biweekly),
+        extra_income: roundMoney(extra),
         income: roundMoney(monthlyIncome),
         income_percentage: incomeShare * 100,
         monthly_share: roundMoney(monthlyShare),

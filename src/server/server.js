@@ -178,6 +178,35 @@ async function ensureFeatureSchema() {
         person_id INTEGER PRIMARY KEY REFERENCES public.people(person_id) ON DELETE CASCADE,
         biweekly_amount NUMERIC(10, 2) NOT NULL DEFAULT 0
       )`);
+    await query(`
+      CREATE TABLE IF NOT EXISTS public.extra_income (
+        extra_income_id BIGSERIAL PRIMARY KEY,
+        person_id INTEGER NOT NULL REFERENCES public.people(person_id) ON DELETE CASCADE,
+        month SMALLINT NOT NULL CHECK (month BETWEEN 1 AND 12),
+        year SMALLINT NOT NULL,
+        amount NUMERIC(10, 2) NOT NULL CHECK (amount > 0),
+        description VARCHAR(255)
+      )`);
+    await query(`
+      CREATE TABLE IF NOT EXISTS public.recurring_transactions (
+        recurring_id BIGSERIAL PRIMARY KEY,
+        subcategory_id INTEGER NOT NULL REFERENCES public.subcategories(subcategory_id),
+        amount NUMERIC(10, 2) NOT NULL CHECK (amount > 0),
+        location VARCHAR(100),
+        paid_by_person_id INTEGER REFERENCES public.people(person_id),
+        notes VARCHAR(255),
+        day_of_month SMALLINT NOT NULL DEFAULT 1 CHECK (day_of_month BETWEEN 1 AND 31),
+        is_active BOOLEAN NOT NULL DEFAULT TRUE
+      )`);
+    await query(`
+      CREATE TABLE IF NOT EXISTS public.recurring_applied (
+        applied_id BIGSERIAL PRIMARY KEY,
+        recurring_id BIGINT NOT NULL REFERENCES public.recurring_transactions(recurring_id) ON DELETE CASCADE,
+        month SMALLINT NOT NULL CHECK (month BETWEEN 1 AND 12),
+        year SMALLINT NOT NULL,
+        transaction_id BIGINT REFERENCES public.transactions(transaction_id) ON DELETE SET NULL,
+        UNIQUE(recurring_id, month, year)
+      )`);
     return;
   }
 
@@ -204,6 +233,50 @@ async function ensureFeatureSchema() {
         biweekly_amount DECIMAL(10,2) NOT NULL DEFAULT 0,
         CONSTRAINT FK_income_config_people FOREIGN KEY (person_id)
           REFERENCES dbo.people(person_id) ON DELETE CASCADE
+      );
+    END`);
+  await query(`
+    IF OBJECT_ID(N'dbo.extra_income', N'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.extra_income (
+        extra_income_id INT IDENTITY(1,1) PRIMARY KEY,
+        person_id INT NOT NULL,
+        month SMALLINT NOT NULL,
+        year SMALLINT NOT NULL,
+        amount DECIMAL(10,2) NOT NULL CHECK (amount > 0),
+        description NVARCHAR(255) NULL,
+        CONSTRAINT FK_extra_income_people FOREIGN KEY (person_id)
+          REFERENCES dbo.people(person_id) ON DELETE CASCADE
+      );
+    END`);
+  await query(`
+    IF OBJECT_ID(N'dbo.recurring_transactions', N'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.recurring_transactions (
+        recurring_id INT IDENTITY(1,1) PRIMARY KEY,
+        subcategory_id INT NOT NULL,
+        amount DECIMAL(10,2) NOT NULL CHECK (amount > 0),
+        location NVARCHAR(100) NULL,
+        paid_by_person_id INT NULL,
+        notes NVARCHAR(255) NULL,
+        day_of_month SMALLINT NOT NULL DEFAULT 1,
+        is_active BIT NOT NULL DEFAULT 1,
+        CONSTRAINT FK_recurring_subcategories FOREIGN KEY (subcategory_id)
+          REFERENCES dbo.subcategories(subcategory_id)
+      );
+    END`);
+  await query(`
+    IF OBJECT_ID(N'dbo.recurring_applied', N'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.recurring_applied (
+        applied_id INT IDENTITY(1,1) PRIMARY KEY,
+        recurring_id INT NOT NULL,
+        month SMALLINT NOT NULL,
+        year SMALLINT NOT NULL,
+        transaction_id BIGINT NULL,
+        CONSTRAINT FK_recurring_applied_rt FOREIGN KEY (recurring_id)
+          REFERENCES dbo.recurring_transactions(recurring_id) ON DELETE CASCADE,
+        CONSTRAINT UQ_recurring_applied UNIQUE (recurring_id, month, year)
       );
     END`);
 }
@@ -534,7 +607,7 @@ app.get("/contributions", async (req, res) => {
       ? `EXTRACT(MONTH FROM ${column}) = @month AND EXTRACT(YEAR FROM ${column}) = @year`
       : `MONTH(${column}) = @month AND YEAR(${column}) = @year`;
 
-    const [people, incomeConfig, personalExpenses, plannedRows] = await Promise.all([
+    const [people, incomeConfig, extraIncome, personalExpenses, plannedRows] = await Promise.all([
       query(
         `SELECT person_id, name FROM ${prefix}.people
          WHERE ${householdPredicate} AND LOWER(name) <> 'joint'
@@ -546,6 +619,13 @@ app.get("/contributions", async (req, res) => {
          FROM ${prefix}.people p
          LEFT JOIN ${prefix}.income_config ic ON ic.person_id = p.person_id
          WHERE ${householdPredicate} AND LOWER(p.name) <> 'joint'`
+      ),
+      query(
+        `SELECT person_id, SUM(amount) AS amount
+         FROM ${prefix}.extra_income
+         WHERE month = @month AND year = @year
+         GROUP BY person_id`,
+        period
       ),
       query(
         `SELECT paid_by_person_id AS person_id, SUM(amount) AS amount
@@ -566,6 +646,7 @@ app.get("/contributions", async (req, res) => {
     res.json(calculateContributionSummary({
       people,
       incomeConfig,
+      extraIncome,
       personalExpenses,
       plannedExpenses: plannedRows[0]?.planned_expenses || 0,
     }));
@@ -619,6 +700,73 @@ app.put("/income-config/:personId", async (req, res) => {
   }
 });
 
+app.get("/extra-income", async (req, res) => {
+  try {
+    const period = readMonthYear(req, res);
+    if (!period) return;
+    const prefix = dbType === "postgres" ? "public" : "dbo";
+    const householdPredicate = dbType === "postgres" ? "is_household = TRUE" : "is_household = 1";
+    const rows = await query(
+      `SELECT ei.extra_income_id, ei.person_id, p.name AS person_name,
+              ei.month, ei.year, ei.amount, ei.description
+       FROM ${prefix}.extra_income ei
+       JOIN ${prefix}.people p ON p.person_id = ei.person_id
+       WHERE ei.month = @month AND ei.year = @year
+         AND ${householdPredicate.replace("is_household", "p.is_household")}
+       ORDER BY ei.extra_income_id`,
+      period
+    );
+    res.json(rows.map(row => ({ ...row, amount: Number(row.amount) })));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to fetch extra income" });
+  }
+});
+
+app.post("/extra-income", async (req, res) => {
+  try {
+    const personId = Number(req.body.person_id);
+    const month = Number(req.body.month);
+    const year = Number(req.body.year);
+    const amount = Number(req.body.amount);
+    const description = req.body.description?.trim() || null;
+    if (!Number.isInteger(personId) || !Number.isInteger(month) || month < 1 || month > 12 ||
+        !Number.isInteger(year) || !Number.isFinite(amount) || amount <= 0) {
+      return res.status(400).json({ error: "Valid person, month, year, and positive amount are required" });
+    }
+    const queryText = dbType === "postgres"
+      ? `INSERT INTO public.extra_income (person_id, month, year, amount, description)
+         VALUES (@person_id, @month, @year, @amount, @description)
+         RETURNING extra_income_id`
+      : `INSERT INTO dbo.extra_income (person_id, month, year, amount, description)
+         OUTPUT INSERTED.extra_income_id AS extra_income_id
+         VALUES (@person_id, @month, @year, @amount, @description)`;
+    const rows = await query(queryText, { person_id: personId, month, year, amount, description });
+    res.status(201).json({ extra_income_id: rows[0].extra_income_id });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to add extra income" });
+  }
+});
+
+app.delete("/extra-income/:extraIncomeId", async (req, res) => {
+  try {
+    const extraIncomeId = Number(req.params.extraIncomeId);
+    if (!Number.isInteger(extraIncomeId)) {
+      return res.status(400).json({ error: "A valid extra income ID is required" });
+    }
+    const queryText = dbType === "postgres"
+      ? "DELETE FROM public.extra_income WHERE extra_income_id = @extra_income_id RETURNING extra_income_id"
+      : "DELETE FROM dbo.extra_income OUTPUT DELETED.extra_income_id AS extra_income_id WHERE extra_income_id = @extra_income_id";
+    const rows = await query(queryText, { extra_income_id: extraIncomeId });
+    if (!rows?.length) return res.status(404).json({ error: "Extra income not found" });
+    res.json({ extra_income_id: rows[0].extra_income_id });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to delete extra income" });
+  }
+});
+
 app.get("/summary/monthly", async (req, res) => {
   try {
     const { year } = req.query;
@@ -643,6 +791,198 @@ app.get("/summary/monthly", async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Failed to fetch monthly summary" });
+  }
+});
+
+// ────────── RECURRING TRANSACTIONS ──────────
+
+app.get("/recurring-transactions", async (req, res) => {
+  try {
+    const prefix = dbType === "postgres" ? "public" : "dbo";
+    const rows = await query(
+      `SELECT rt.recurring_id, rt.subcategory_id, sc.name AS subcategory,
+              c.name AS category, rt.amount, rt.location,
+              rt.paid_by_person_id, p.name AS paid_by,
+              rt.notes, rt.day_of_month, rt.is_active
+       FROM ${prefix}.recurring_transactions rt
+       JOIN ${prefix}.subcategories sc ON sc.subcategory_id = rt.subcategory_id
+       JOIN ${prefix}.categories c ON c.category_id = sc.category_id
+       LEFT JOIN ${prefix}.people p ON p.person_id = rt.paid_by_person_id
+       WHERE rt.is_active = ${dbType === "postgres" ? "TRUE" : "1"}
+       ORDER BY c.display_order, sc.display_order, rt.recurring_id`
+    );
+    res.json(rows.map(row => ({ ...row, amount: Number(row.amount), day_of_month: Number(row.day_of_month) })));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to fetch recurring transactions" });
+  }
+});
+
+app.get("/recurring-transactions/pending", async (req, res) => {
+  try {
+    const period = readMonthYear(req, res);
+    if (!period) return;
+    const prefix = dbType === "postgres" ? "public" : "dbo";
+    const isActiveExpr = dbType === "postgres" ? "rt.is_active = TRUE" : "rt.is_active = 1";
+    const rows = await query(
+      `SELECT COUNT(*) AS pending
+       FROM ${prefix}.recurring_transactions rt
+       WHERE ${isActiveExpr}
+         AND NOT EXISTS (
+           SELECT 1 FROM ${prefix}.recurring_applied ra
+           WHERE ra.recurring_id = rt.recurring_id
+             AND ra.month = @month AND ra.year = @year
+         )`,
+      period
+    );
+    res.json({ pending: Number(rows[0]?.pending ?? 0) });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to fetch pending recurring count" });
+  }
+});
+
+app.post("/recurring-transactions", async (req, res) => {
+  try {
+    const { subcategory_id, amount, location, paid_by_person_id, notes, day_of_month } = req.body;
+    if (!Number.isInteger(Number(subcategory_id)) || !Number.isFinite(Number(amount)) || Number(amount) <= 0) {
+      return res.status(400).json({ error: "Valid subcategory and positive amount are required" });
+    }
+    const day = Math.min(Math.max(Number.isInteger(Number(day_of_month)) ? Number(day_of_month) : 1, 1), 31);
+    const queryText = dbType === "postgres"
+      ? `INSERT INTO public.recurring_transactions (subcategory_id, amount, location, paid_by_person_id, notes, day_of_month)
+         VALUES (@subcategory_id, @amount, @location, @paid_by_person_id, @notes, @day_of_month)
+         RETURNING recurring_id`
+      : `INSERT INTO dbo.recurring_transactions (subcategory_id, amount, location, paid_by_person_id, notes, day_of_month)
+         OUTPUT INSERTED.recurring_id AS recurring_id
+         VALUES (@subcategory_id, @amount, @location, @paid_by_person_id, @notes, @day_of_month)`;
+    const rows = await query(queryText, {
+      subcategory_id: Number(subcategory_id), amount: Number(amount),
+      location: location?.trim() || null, paid_by_person_id: paid_by_person_id ? Number(paid_by_person_id) : null,
+      notes: notes?.trim() || null, day_of_month: day,
+    });
+    res.status(201).json({ recurring_id: rows[0].recurring_id });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to create recurring transaction" });
+  }
+});
+
+app.put("/recurring-transactions/:recurringId", async (req, res) => {
+  try {
+    const recurringId = Number(req.params.recurringId);
+    const { amount, location, paid_by_person_id, notes, day_of_month } = req.body;
+    if (!Number.isInteger(recurringId) || !Number.isFinite(Number(amount)) || Number(amount) <= 0) {
+      return res.status(400).json({ error: "Valid recurring ID and positive amount are required" });
+    }
+    const day = Math.min(Math.max(Number.isInteger(Number(day_of_month)) ? Number(day_of_month) : 1, 1), 31);
+    // Only updates the template; previously created transactions are intentionally untouched
+    const queryText = dbType === "postgres"
+      ? `UPDATE public.recurring_transactions
+         SET amount = @amount, location = @location, paid_by_person_id = @paid_by_person_id,
+             notes = @notes, day_of_month = @day_of_month
+         WHERE recurring_id = @recurring_id
+         RETURNING recurring_id`
+      : `UPDATE dbo.recurring_transactions
+         SET amount = @amount, location = @location, paid_by_person_id = @paid_by_person_id,
+             notes = @notes, day_of_month = @day_of_month
+         OUTPUT INSERTED.recurring_id AS recurring_id
+         WHERE recurring_id = @recurring_id`;
+    const rows = await query(queryText, {
+      recurring_id: recurringId, amount: Number(amount),
+      location: location?.trim() || null, paid_by_person_id: paid_by_person_id ? Number(paid_by_person_id) : null,
+      notes: notes?.trim() || null, day_of_month: day,
+    });
+    if (!rows?.length) return res.status(404).json({ error: "Recurring transaction not found" });
+    res.json({ recurring_id: rows[0].recurring_id });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to update recurring transaction" });
+  }
+});
+
+app.delete("/recurring-transactions/:recurringId", async (req, res) => {
+  try {
+    const recurringId = Number(req.params.recurringId);
+    if (!Number.isInteger(recurringId)) {
+      return res.status(400).json({ error: "A valid recurring transaction ID is required" });
+    }
+    // Soft-delete preserves history of applied transactions
+    const queryText = dbType === "postgres"
+      ? `UPDATE public.recurring_transactions SET is_active = FALSE WHERE recurring_id = @recurring_id RETURNING recurring_id`
+      : `UPDATE dbo.recurring_transactions SET is_active = 0 OUTPUT INSERTED.recurring_id AS recurring_id WHERE recurring_id = @recurring_id`;
+    const rows = await query(queryText, { recurring_id: recurringId });
+    if (!rows?.length) return res.status(404).json({ error: "Recurring transaction not found" });
+    res.json({ recurring_id: rows[0].recurring_id });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to delete recurring transaction" });
+  }
+});
+
+app.post("/recurring-transactions/apply", async (req, res) => {
+  try {
+    const month = Number(req.body.month);
+    const year = Number(req.body.year);
+    if (!Number.isInteger(month) || month < 1 || month > 12 || !Number.isInteger(year)) {
+      return res.status(400).json({ error: "A valid month and year are required" });
+    }
+    const prefix = dbType === "postgres" ? "public" : "dbo";
+    const isActiveExpr = dbType === "postgres" ? "is_active = TRUE" : "is_active = 1";
+    const pending = await query(
+      `SELECT rt.recurring_id, rt.subcategory_id, rt.amount, rt.location,
+              rt.paid_by_person_id, rt.notes, rt.day_of_month
+       FROM ${prefix}.recurring_transactions rt
+       WHERE ${isActiveExpr}
+         AND NOT EXISTS (
+           SELECT 1 FROM ${prefix}.recurring_applied ra
+           WHERE ra.recurring_id = rt.recurring_id
+             AND ra.month = @month AND ra.year = @year
+         )`,
+      { month, year }
+    );
+
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const created = [];
+
+    for (const rt of pending) {
+      const day = Math.min(Number(rt.day_of_month), daysInMonth);
+      const transactionDate = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+
+      if (dbType === "postgres") {
+        const txRows = await query(
+          `INSERT INTO public.transactions (subcategory_id, transaction_date, amount, location, paid_by_person_id, notes)
+           VALUES (@subcategory_id, @transaction_date, @amount, @location, @paid_by_person_id, @notes)
+           RETURNING transaction_id`,
+          { subcategory_id: Number(rt.subcategory_id), transaction_date: transactionDate, amount: Number(rt.amount), location: rt.location || null, paid_by_person_id: rt.paid_by_person_id ? Number(rt.paid_by_person_id) : null, notes: rt.notes || null }
+        );
+        await query(
+          `INSERT INTO public.recurring_applied (recurring_id, month, year, transaction_id)
+           VALUES (@recurring_id, @month, @year, @transaction_id)
+           ON CONFLICT (recurring_id, month, year) DO NOTHING`,
+          { recurring_id: Number(rt.recurring_id), month, year, transaction_id: txRows[0].transaction_id }
+        );
+        created.push(txRows[0].transaction_id);
+      } else {
+        const txRows = await query(
+          `INSERT INTO dbo.transactions (subcategory_id, transaction_date, amount, location, paid_by_person_id, notes)
+           OUTPUT INSERTED.transaction_id AS transaction_id
+           VALUES (@subcategory_id, @transaction_date, @amount, @location, @paid_by_person_id, @notes)`,
+          { subcategory_id: Number(rt.subcategory_id), transaction_date: transactionDate, amount: Number(rt.amount), location: rt.location || null, paid_by_person_id: rt.paid_by_person_id ? Number(rt.paid_by_person_id) : null, notes: rt.notes || null }
+        );
+        await query(
+          `IF NOT EXISTS (SELECT 1 FROM dbo.recurring_applied WHERE recurring_id = @recurring_id AND month = @month AND year = @year)
+           INSERT INTO dbo.recurring_applied (recurring_id, month, year, transaction_id) VALUES (@recurring_id, @month, @year, @transaction_id)`,
+          { recurring_id: Number(rt.recurring_id), month, year, transaction_id: txRows[0].transaction_id }
+        );
+        created.push(txRows[0].transaction_id);
+      }
+    }
+
+    res.json({ applied: created.length, transactions_created: created });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to apply recurring transactions" });
   }
 });
 

@@ -5,12 +5,12 @@ import {
     ChartNoAxesColumnIncreasing,
     CircleDollarSign,
     DollarSign,
-    FileUp,
     LayoutDashboard,
     Menu,
     Moon,
     Plus,
     ReceiptText,
+    Repeat,
     Settings,
     Target,
     Sun,
@@ -29,7 +29,7 @@ const navItems = [
   { label: 'Budget', href: '/budget' as Href, icon: WalletCards },
   { label: 'Insights', href: '/explore' as Href, icon: ChartNoAxesColumnIncreasing },
   { label: 'Goals', href: '/goals' as Href, icon: Target },
-  { label: 'Import', href: '/import' as Href, icon: FileUp },
+  { label: 'Recurring', href: '/recurring' as Href, icon: Repeat },
 ];
 
 const mobileNavItems = [

@@ -168,7 +168,7 @@ export function moveMonth(month: number, year: number, offset: number) {
   return { month: date.getMonth() + 1, year: date.getFullYear() };
 }
 
-export function formatCurrency(value: number, digits = 0) {
+export function formatCurrency(value: number, digits = 2) {
   return new Intl.NumberFormat('en-CA', {
     style: 'currency',
     currency: 'CAD',
