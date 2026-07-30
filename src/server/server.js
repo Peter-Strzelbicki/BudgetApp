@@ -1,16 +1,24 @@
 ﻿require("dotenv").config();
 
 const crypto = require("crypto");
+const { execFile } = require("child_process");
+const fs = require("fs/promises");
+const { promisify } = require("util");
 const path = require("path");
 const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
 const { Pool } = require("pg");
 const { calculateContributionSummary } = require("./contributions");
+const { buildIncomeYearSummary, resolveIncomeConfig } = require("./income-history");
 const { parseBudgetWorkbook } = require("./import-xlsx");
 const { commitBudgetImport, findUnmatchedPayers } = require("./import-xlsx-db");
 
 const app = express();
+const execFileAsync = promisify(execFile);
+const backupScriptPath = process.env.BACKUP_SCRIPT_PATH || path.resolve(__dirname, "..", "..", "scripts", "backup-db.sh");
+const backupStatusPath = process.env.BACKUP_STATUS_FILE || "/home/pstrzelbicki/.local/share/homebudget/backup-status.json";
+let backupRunPromise = null;
 
 app.use(cors());
 app.use(express.json());
@@ -38,6 +46,48 @@ function cleanupPendingImports() {
   while (pendingImports.size > 10) {
     pendingImports.delete(pendingImports.keys().next().value);
   }
+}
+
+async function readBackupStatus() {
+  try {
+    const statusText = await fs.readFile(backupStatusPath, "utf8");
+    return JSON.parse(statusText);
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return {
+        last_backup_utc: null,
+        backup_name: null,
+        backup_size_bytes: null,
+        backup_target: null,
+      };
+    }
+
+    if (error instanceof SyntaxError) {
+      console.warn(`Ignoring malformed backup status file at ${backupStatusPath}`);
+      return {
+        last_backup_utc: null,
+        backup_name: null,
+        backup_size_bytes: null,
+        backup_target: null,
+      };
+    }
+
+    throw error;
+  }
+}
+
+async function runBackupJob() {
+  if (!backupRunPromise) {
+    backupRunPromise = execFileAsync("/usr/bin/env", ["bash", backupScriptPath], {
+      cwd: path.resolve(__dirname, "..", ".."),
+      env: process.env,
+      maxBuffer: 5 * 1024 * 1024,
+    }).finally(() => {
+      backupRunPromise = null;
+    });
+  }
+
+  return backupRunPromise;
 }
 
 const dbType = process.env.DB_TYPE || "postgres";
@@ -172,7 +222,51 @@ function readMonthYear(req, res) {
   return { month, year };
 }
 
+async function loadIncomeConfiguration(month, year) {
+  const prefix = dbType === "postgres" ? "public" : "dbo";
+  const householdPredicate = dbType === "postgres" ? "is_household = TRUE" : "is_household = 1";
+  const period = { month, year };
+  const [people, defaults, records] = await Promise.all([
+    query(
+      `SELECT person_id, name FROM ${prefix}.people
+       WHERE ${householdPredicate} AND LOWER(name) <> 'joint'
+       ORDER BY person_id`
+    ),
+    query(
+      `SELECT person_id, biweekly_amount, payday_anchor
+       FROM ${prefix}.income_config`
+    ),
+    query(
+      `SELECT person_id, month, year, biweekly_amount, payday_anchor
+       FROM ${prefix}.monthly_income_config
+       WHERE year < @year OR (year = @year AND month <= @month)
+       ORDER BY person_id, year, month`,
+      period
+    ),
+  ]);
+  const normalizedDefaults = defaults.map(row => ({
+    ...row,
+    biweekly_amount: Number(row.biweekly_amount),
+    payday_anchor: serializeDate(row.payday_anchor),
+  }));
+  const normalizedRecords = records.map(row => ({
+    ...row,
+    month: Number(row.month),
+    year: Number(row.year),
+    biweekly_amount: Number(row.biweekly_amount),
+    payday_anchor: serializeDate(row.payday_anchor),
+  }));
+  return {
+    people,
+    defaults: normalizedDefaults,
+    records: normalizedRecords,
+    config: resolveIncomeConfig(people, normalizedDefaults, normalizedRecords, month, year),
+  };
+}
+
 async function ensureFeatureSchema() {
+  const today = new Date();
+  const currentPeriod = { month: today.getMonth() + 1, year: today.getFullYear() };
   if (dbType === "postgres") {
     await query(`
       CREATE TABLE IF NOT EXISTS public.paychecks (
@@ -205,6 +299,20 @@ async function ensureFeatureSchema() {
       WHERE p.person_id = ic.person_id
         AND ic.payday_anchor IS NULL
         AND LOWER(p.name) IN ('peter', 'sailah')`);
+    await query(`
+      CREATE TABLE IF NOT EXISTS public.monthly_income_config (
+        person_id INTEGER NOT NULL REFERENCES public.people(person_id) ON DELETE CASCADE,
+        month SMALLINT NOT NULL CHECK (month BETWEEN 1 AND 12),
+        year SMALLINT NOT NULL,
+        biweekly_amount NUMERIC(10, 2) NOT NULL DEFAULT 0,
+        payday_anchor DATE,
+        PRIMARY KEY (person_id, month, year)
+      )`);
+    await query(`
+      INSERT INTO public.monthly_income_config (person_id, month, year, biweekly_amount, payday_anchor)
+      SELECT person_id, @month, @year, biweekly_amount, payday_anchor
+      FROM public.income_config
+      ON CONFLICT (person_id, month, year) DO NOTHING`, currentPeriod);
     await query(`
       CREATE TABLE IF NOT EXISTS public.joint_payments (
         joint_payment_id BIGSERIAL PRIMARY KEY,
@@ -288,6 +396,30 @@ async function ensureFeatureSchema() {
     JOIN dbo.people p ON p.person_id = ic.person_id
     WHERE ic.payday_anchor IS NULL AND LOWER(p.name) IN ('peter', 'sailah')`);
   await query(`
+    IF OBJECT_ID(N'dbo.monthly_income_config', N'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.monthly_income_config (
+        person_id INT NOT NULL,
+        month SMALLINT NOT NULL CHECK (month BETWEEN 1 AND 12),
+        year SMALLINT NOT NULL,
+        biweekly_amount DECIMAL(10,2) NOT NULL DEFAULT 0,
+        payday_anchor DATE NULL,
+        CONSTRAINT PK_monthly_income_config PRIMARY KEY (person_id, month, year),
+        CONSTRAINT FK_monthly_income_config_people FOREIGN KEY (person_id)
+          REFERENCES dbo.people(person_id) ON DELETE CASCADE
+      );
+    END`);
+  await query(`
+    MERGE dbo.monthly_income_config AS target
+    USING (
+      SELECT person_id, @month AS month, @year AS year, biweekly_amount, payday_anchor
+      FROM dbo.income_config
+    ) AS source
+    ON target.person_id = source.person_id AND target.month = source.month AND target.year = source.year
+    WHEN NOT MATCHED THEN
+      INSERT (person_id, month, year, biweekly_amount, payday_anchor)
+      VALUES (source.person_id, source.month, source.year, source.biweekly_amount, source.payday_anchor);`, currentPeriod);
+  await query(`
     IF OBJECT_ID(N'dbo.joint_payments', N'U') IS NULL
     BEGIN
       CREATE TABLE dbo.joint_payments (
@@ -363,6 +495,29 @@ app.get("/test-db", async (req, res) => {
   }
 });
 
+app.get("/backup-status", async (req, res) => {
+  try {
+    res.json(await readBackupStatus());
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to fetch backup status" });
+  }
+});
+
+app.post("/backup-now", async (req, res) => {
+  try {
+    if (backupRunPromise) {
+      return res.status(409).json({ error: "A backup is already running" });
+    }
+
+    await runBackupJob();
+    res.json(await readBackupStatus());
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to run backup" });
+  }
+});
+
 app.get("/transactions", async (req, res) => {
   try {
     const { month, year } = req.query;
@@ -373,7 +528,19 @@ app.get("/transactions", async (req, res) => {
       queryText = `
          SELECT t.transaction_id, t.subcategory_id, sc.category_id, t.paid_by_person_id,
            t.transaction_date, t.amount, t.location, t.notes,
-           sc.name AS subcategory, c.name AS category, p.name AS paid_by
+           sc.name AS subcategory, c.name AS category, p.name AS paid_by,
+           EXISTS(
+             SELECT 1
+             FROM public.recurring_applied ra
+             WHERE ra.transaction_id = t.transaction_id
+           ) AS is_recurring,
+           (
+             SELECT ra.recurring_id
+             FROM public.recurring_applied ra
+             WHERE ra.transaction_id = t.transaction_id
+             ORDER BY ra.applied_id DESC
+             LIMIT 1
+           ) AS recurring_id
         FROM public.transactions t
         JOIN public.subcategories sc ON sc.subcategory_id = t.subcategory_id
         JOIN public.categories c ON c.category_id = sc.category_id
@@ -389,7 +556,18 @@ app.get("/transactions", async (req, res) => {
       queryText = `
          SELECT t.transaction_id, t.subcategory_id, sc.category_id, t.paid_by_person_id,
            t.transaction_date, t.amount, t.location, t.notes,
-           sc.name AS subcategory, c.name AS category, p.name AS paid_by
+           sc.name AS subcategory, c.name AS category, p.name AS paid_by,
+           CASE WHEN EXISTS(
+             SELECT 1
+             FROM dbo.recurring_applied ra
+             WHERE ra.transaction_id = t.transaction_id
+           ) THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS is_recurring,
+           (
+             SELECT TOP 1 ra.recurring_id
+             FROM dbo.recurring_applied ra
+             WHERE ra.transaction_id = t.transaction_id
+             ORDER BY ra.applied_id DESC
+           ) AS recurring_id
         FROM dbo.transactions t
         JOIN dbo.subcategories sc ON sc.subcategory_id = t.subcategory_id
         JOIN dbo.categories c ON c.category_id = sc.category_id
@@ -422,7 +600,19 @@ app.get("/transactions/:transactionId", async (req, res) => {
     const queryText = dbType === "postgres"
       ? `SELECT t.transaction_id, t.subcategory_id, sc.category_id, t.paid_by_person_id,
                 t.transaction_date, t.amount, t.location, t.notes,
-                sc.name AS subcategory, c.name AS category, p.name AS paid_by
+                sc.name AS subcategory, c.name AS category, p.name AS paid_by,
+                EXISTS(
+                  SELECT 1
+                  FROM public.recurring_applied ra
+                  WHERE ra.transaction_id = t.transaction_id
+                ) AS is_recurring,
+                (
+                  SELECT ra.recurring_id
+                  FROM public.recurring_applied ra
+                  WHERE ra.transaction_id = t.transaction_id
+                  ORDER BY ra.applied_id DESC
+                  LIMIT 1
+                ) AS recurring_id
          FROM public.transactions t
          JOIN public.subcategories sc ON sc.subcategory_id = t.subcategory_id
          JOIN public.categories c ON c.category_id = sc.category_id
@@ -430,7 +620,18 @@ app.get("/transactions/:transactionId", async (req, res) => {
          WHERE t.transaction_id = @transaction_id`
       : `SELECT t.transaction_id, t.subcategory_id, sc.category_id, t.paid_by_person_id,
                 t.transaction_date, t.amount, t.location, t.notes,
-                sc.name AS subcategory, c.name AS category, p.name AS paid_by
+                sc.name AS subcategory, c.name AS category, p.name AS paid_by,
+                CASE WHEN EXISTS(
+                  SELECT 1
+                  FROM dbo.recurring_applied ra
+                  WHERE ra.transaction_id = t.transaction_id
+                ) THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS is_recurring,
+                (
+                  SELECT TOP 1 ra.recurring_id
+                  FROM dbo.recurring_applied ra
+                  WHERE ra.transaction_id = t.transaction_id
+                  ORDER BY ra.applied_id DESC
+                ) AS recurring_id
          FROM dbo.transactions t
          JOIN dbo.subcategories sc ON sc.subcategory_id = t.subcategory_id
          JOIN dbo.categories c ON c.category_id = sc.category_id
@@ -776,24 +977,12 @@ app.get("/contributions", async (req, res) => {
     const period = readMonthYear(req, res);
     if (!period) return;
     const prefix = dbType === "postgres" ? "public" : "dbo";
-    const householdPredicate = dbType === "postgres" ? "is_household = TRUE" : "is_household = 1";
     const monthExpression = column => dbType === "postgres"
       ? `EXTRACT(MONTH FROM ${column}) = @month AND EXTRACT(YEAR FROM ${column}) = @year`
       : `MONTH(${column}) = @month AND YEAR(${column}) = @year`;
 
-    const [people, incomeConfig, extraIncome, paychecks, jointPayments, personalExpenses, plannedRows] = await Promise.all([
-      query(
-        `SELECT person_id, name FROM ${prefix}.people
-         WHERE ${householdPredicate} AND LOWER(name) <> 'joint'
-         ORDER BY person_id`,
-        period
-      ),
-      query(
-        `SELECT p.person_id, COALESCE(ic.biweekly_amount, 0) AS biweekly_amount, ic.payday_anchor
-         FROM ${prefix}.people p
-         LEFT JOIN ${prefix}.income_config ic ON ic.person_id = p.person_id
-         WHERE ${householdPredicate} AND LOWER(p.name) <> 'joint'`
-      ),
+    const [income, extraIncome, paychecks, jointPayments, personalExpenses, plannedRows] = await Promise.all([
+      loadIncomeConfiguration(period.month, period.year),
       query(
         `SELECT person_id, SUM(amount) AS amount
          FROM ${prefix}.extra_income
@@ -829,8 +1018,8 @@ app.get("/contributions", async (req, res) => {
     ]);
 
     res.json(calculateContributionSummary({
-      people,
-      incomeConfig,
+      people: income.people,
+      incomeConfig: income.config,
       extraIncome,
       paychecks,
       jointPayments,
@@ -848,16 +1037,10 @@ app.get("/contributions", async (req, res) => {
 
 app.get("/income-config", async (req, res) => {
   try {
-    const prefix = dbType === "postgres" ? "public" : "dbo";
-    const householdPredicate = dbType === "postgres" ? "is_household = TRUE" : "is_household = 1";
-    const rows = await query(
-      `SELECT p.person_id, p.name, COALESCE(ic.biweekly_amount, 0) AS biweekly_amount, ic.payday_anchor
-       FROM ${prefix}.people p
-       LEFT JOIN ${prefix}.income_config ic ON ic.person_id = p.person_id
-       WHERE ${householdPredicate} AND LOWER(p.name) <> 'joint'
-       ORDER BY p.person_id`
-    );
-    res.json(rows.map(row => ({ ...row, biweekly_amount: Number(row.biweekly_amount), payday_anchor: serializeDate(row.payday_anchor) })));
+    const period = readMonthYear(req, res);
+    if (!period) return;
+    const income = await loadIncomeConfiguration(period.month, period.year);
+    res.json(income.config);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Failed to fetch income config" });
@@ -867,29 +1050,69 @@ app.get("/income-config", async (req, res) => {
 app.put("/income-config/:personId", async (req, res) => {
   try {
     const personId = Number(req.params.personId);
+    const month = Number(req.body.month);
+    const year = Number(req.body.year);
     const amount = Number(req.body.biweekly_amount);
     const paydayAnchor = req.body.payday_anchor || null;
-    if (!Number.isInteger(personId) || !Number.isFinite(amount) || amount < 0 || (paydayAnchor !== null && !isIsoDate(paydayAnchor))) {
-      return res.status(400).json({ error: "Valid person ID, non-negative amount, and payday anchor are required" });
+    if (!Number.isInteger(personId) || !Number.isInteger(month) || month < 1 || month > 12 || !Number.isInteger(year) ||
+        !Number.isFinite(amount) || amount < 0 || (paydayAnchor !== null && !isIsoDate(paydayAnchor))) {
+      return res.status(400).json({ error: "Valid person, month, year, non-negative amount, and payday anchor are required" });
     }
     const queryText = dbType === "postgres"
-      ? `INSERT INTO public.income_config (person_id, biweekly_amount, payday_anchor)
-         VALUES (@person_id, @amount, @payday_anchor)
-         ON CONFLICT (person_id) DO UPDATE
+      ? `INSERT INTO public.monthly_income_config (person_id, month, year, biweekly_amount, payday_anchor)
+         VALUES (@person_id, @month, @year, @amount, @payday_anchor)
+         ON CONFLICT (person_id, month, year) DO UPDATE
          SET biweekly_amount = EXCLUDED.biweekly_amount,
-             payday_anchor = COALESCE(EXCLUDED.payday_anchor, public.income_config.payday_anchor)
-         RETURNING person_id, biweekly_amount, payday_anchor`
-      : `MERGE dbo.income_config AS target
-         USING (SELECT @person_id AS person_id, @amount AS biweekly_amount, @payday_anchor AS payday_anchor) AS source
-         ON target.person_id = source.person_id
+             payday_anchor = COALESCE(EXCLUDED.payday_anchor, public.monthly_income_config.payday_anchor)
+         RETURNING person_id, month, year, biweekly_amount, payday_anchor`
+      : `MERGE dbo.monthly_income_config AS target
+         USING (SELECT @person_id AS person_id, @month AS month, @year AS year, @amount AS biweekly_amount, @payday_anchor AS payday_anchor) AS source
+         ON target.person_id = source.person_id AND target.month = source.month AND target.year = source.year
          WHEN MATCHED THEN UPDATE SET biweekly_amount = source.biweekly_amount, payday_anchor = COALESCE(source.payday_anchor, target.payday_anchor)
-         WHEN NOT MATCHED THEN INSERT (person_id, biweekly_amount, payday_anchor) VALUES (source.person_id, source.biweekly_amount, source.payday_anchor);
-         SELECT person_id, biweekly_amount, payday_anchor FROM dbo.income_config WHERE person_id = @person_id`;
-    const rows = await query(queryText, { person_id: personId, amount, payday_anchor: paydayAnchor });
-    res.json({ person_id: personId, biweekly_amount: Number(rows[0].biweekly_amount), payday_anchor: serializeDate(rows[0].payday_anchor) });
+         WHEN NOT MATCHED THEN INSERT (person_id, month, year, biweekly_amount, payday_anchor) VALUES (source.person_id, source.month, source.year, source.biweekly_amount, source.payday_anchor);
+         SELECT person_id, month, year, biweekly_amount, payday_anchor FROM dbo.monthly_income_config
+         WHERE person_id = @person_id AND month = @month AND year = @year`;
+    const rows = await query(queryText, { person_id: personId, month, year, amount, payday_anchor: paydayAnchor });
+    res.json({
+      person_id: personId,
+      month,
+      year,
+      biweekly_amount: Number(rows[0].biweekly_amount),
+      payday_anchor: serializeDate(rows[0].payday_anchor),
+    });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Failed to save income config" });
+  }
+});
+
+app.get("/income-summary", async (req, res) => {
+  try {
+    const year = Number(req.query.year);
+    if (!Number.isInteger(year)) {
+      return res.status(400).json({ error: "A valid year is required" });
+    }
+    const prefix = dbType === "postgres" ? "public" : "dbo";
+    const [income, extraIncome] = await Promise.all([
+      loadIncomeConfiguration(12, year),
+      query(
+        `SELECT person_id, month, year, SUM(amount) AS amount
+         FROM ${prefix}.extra_income
+         WHERE year = @year
+         GROUP BY person_id, month, year`,
+        { year }
+      ),
+    ]);
+    res.json(buildIncomeYearSummary({
+      people: income.people,
+      defaults: income.defaults,
+      records: income.records,
+      extraIncome,
+      year,
+    }));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to fetch income summary" });
   }
 });
 

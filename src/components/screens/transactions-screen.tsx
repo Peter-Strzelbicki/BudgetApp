@@ -20,6 +20,7 @@ export default function TransactionsScreen() {
   const [pendingRecurring, setPendingRecurring] = useState(0);
   const [applying, setApplying] = useState(false);
   const [contribution, setContribution] = useState<ContributionSummary | null>(null);
+  const [categoryFilter, setCategoryFilter] = useState('All');
 
   const load = async () => {
     setLoading(true); setError(null);
@@ -69,8 +70,17 @@ export default function TransactionsScreen() {
     } finally { setApplying(false); }
   };
 
+  const categories = ['All', ...Array.from(new Set(transactions.map(transaction => transaction.category))).sort((a, b) => a.localeCompare(b))];
   const normalizedQuery = query.trim().toLowerCase();
-  const filtered = transactions.filter(transaction => !normalizedQuery || [transaction.location, transaction.category, transaction.subcategory, transaction.paid_by, transaction.notes].some(value => value?.toLowerCase().includes(normalizedQuery)));
+  const normalizedCategory = categoryFilter.toLowerCase();
+  const filtered = transactions.filter(transaction => {
+    const matchesCategory = normalizedCategory === 'all' || transaction.category.toLowerCase() === normalizedCategory;
+    if (!matchesCategory) return false;
+    if (!normalizedQuery) return true;
+    const recurringTerms = transaction.is_recurring ? ['recurring', 'repeat', 'repeats'] : [];
+    return [transaction.location, transaction.category, transaction.subcategory, transaction.paid_by, transaction.notes, ...recurringTerms].some(value => value?.toLowerCase().includes(normalizedQuery));
+  });
+  const filteredTotal = filtered.reduce((sum, transaction) => sum + transaction.amount, 0);
   const total = transactions.reduce((sum, transaction) => sum + transaction.amount, 0);
   const monthlyIncome = contribution?.household_income ?? 0;
   const incomeRemaining = monthlyIncome - total;
@@ -90,7 +100,17 @@ export default function TransactionsScreen() {
     )}
     <View style={styles.controls}>
       <MonthSwitcher month={month} year={year} onPrevious={() => changeMonth(-1)} onNext={() => changeMonth(1)} />
-      <View style={styles.searchWrap}><Search color={BudgetColors.muted} size={17} /><TextInput value={query} onChangeText={setQuery} placeholder="Search transactions" placeholderTextColor={BudgetColors.faint} style={styles.searchInput} /></View>
+      <View style={styles.searchWrap}><Search color={BudgetColors.muted} size={17} /><TextInput value={query} onChangeText={setQuery} placeholder="Search transactions or type recurring" placeholderTextColor={BudgetColors.faint} style={styles.searchInput} /></View>
+      <View style={styles.filterRow}>
+        {categories.map(category => (
+          <Pressable
+            key={category}
+            onPress={() => setCategoryFilter(category)}
+            style={({ pressed }) => [styles.filterButton, categoryFilter === category && styles.filterButtonActive, pressed && styles.pressed]}>
+            <Text style={[styles.filterButtonText, categoryFilter === category && styles.filterButtonTextActive]}>{category}</Text>
+          </Pressable>
+        ))}
+      </View>
     </View>
     {monthlyIncome > 0 && (
       <View style={styles.incomeBarPanel}>
@@ -112,12 +132,25 @@ export default function TransactionsScreen() {
       </View>
     )}
     <Panel>
-      <SectionHeader title="Monthly ledger" detail={query ? `${filtered.length} matching result${filtered.length === 1 ? '' : 's'}` : 'Newest transactions first'} />
+      <SectionHeader title="Monthly ledger" detail={(query || categoryFilter !== 'All') ? `${filtered.length} matching result${filtered.length === 1 ? '' : 's'}` : 'Newest transactions first'} />
+      <View style={styles.totalsRow}>
+        <Text style={styles.totalsLabel}>Visible total</Text>
+        <Text style={styles.totalsValue}>{formatCurrency(filteredTotal, 2)}</Text>
+        {(query || categoryFilter !== 'All') && <Text style={styles.totalsContext}>of {formatCurrency(total, 2)} this month</Text>}
+      </View>
       {loading ? <View style={styles.loader}><ActivityIndicator color={BudgetColors.green} size="large" /></View> : filtered.length === 0 ? <EmptyState title={query ? 'Nothing matches' : 'No transactions yet'} detail={query ? 'Try a category, person, or location.' : 'Record the first expense for this month.'} /> : filtered.map((transaction, index) => <View key={transaction.transaction_id} style={[styles.row, compact && styles.rowCompact, index === 0 && styles.rowFirst]}>
         <View style={styles.glyph}><ReceiptText color={BudgetColors.green} size={18} /></View>
         <View style={styles.main}>
           <View style={styles.titleRow}><Text style={styles.name} numberOfLines={1}>{transaction.location || transaction.subcategory}</Text><View style={styles.categoryChip}><Text style={styles.categoryText}>{transaction.category}</Text></View></View>
-          <Text style={styles.meta}>{transaction.subcategory} · {new Date(transaction.transaction_date).toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' })}</Text>
+          <View style={styles.metaRow}>
+            <Text style={styles.meta}>{transaction.subcategory} · {new Date(transaction.transaction_date).toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' })}</Text>
+            {transaction.is_recurring && (
+              <View style={styles.recurringBadge}>
+                <Repeat color={BudgetColors.blue} size={12} />
+                <Text style={styles.recurringBadgeText}>Recurring</Text>
+              </View>
+            )}
+          </View>
           <View style={styles.details}>
             {transaction.location && <View style={styles.detail}><MapPin color={BudgetColors.faint} size={12} /><Text style={styles.detailText}>{transaction.location}</Text></View>}
             {transaction.paid_by && <View style={styles.detail}><UserRound color={BudgetColors.faint} size={12} /><Text style={styles.detailText}>{transaction.paid_by}</Text></View>}
@@ -150,6 +183,11 @@ const styles = StyleSheet.create({
   controls: { flexDirection: 'row', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' },
   searchWrap: { height: 42, minWidth: 240, flex: 1, maxWidth: 390, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: BudgetColors.line, borderRadius: 8, backgroundColor: BudgetColors.surface },
   searchInput: { flex: 1, height: 40, color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 13 },
+  filterRow: { width: '100%', flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+  filterButton: { minHeight: 34, paddingHorizontal: 11, borderRadius: 7, borderWidth: 1, borderColor: BudgetColors.line, backgroundColor: BudgetColors.surface, alignItems: 'center', justifyContent: 'center' },
+  filterButtonActive: { borderColor: BudgetColors.green, backgroundColor: BudgetColors.greenSoft },
+  filterButtonText: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '700' },
+  filterButtonTextActive: { color: BudgetColors.green },
   incomeBarPanel: { padding: 20, borderRadius: 8, backgroundColor: BudgetColors.surface, borderWidth: 1, borderColor: BudgetColors.line },
   incomeBarHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
   incomeBarTitle: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '800' },
@@ -161,13 +199,20 @@ const styles = StyleSheet.create({
   incomeSpent: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '700' },
   incomeLeft: { color: BudgetColors.green, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '800' },
   incomeOver: { color: BudgetColors.coral },
+  totalsRow: { minHeight: 44, paddingVertical: 8, borderTopWidth: 1, borderTopColor: BudgetColors.line, flexDirection: 'row', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' },
+  totalsLabel: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '700', textTransform: 'uppercase' },
+  totalsValue: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 16, fontWeight: '800' },
+  totalsContext: { color: BudgetColors.faint, fontFamily: Fonts.sans, fontSize: 11 },
   loader: { minHeight: 280, alignItems: 'center', justifyContent: 'center' },
   row: { minHeight: 104, flexDirection: 'row', alignItems: 'flex-start', gap: 12, paddingVertical: 16, borderTopWidth: 1, borderTopColor: BudgetColors.line }, rowFirst: { borderTopWidth: 0 }, rowCompact: { minHeight: 120 },
   glyph: { width: 38, height: 38, borderRadius: 7, backgroundColor: BudgetColors.greenSoft, alignItems: 'center', justifyContent: 'center' },
   main: { flex: 1, minWidth: 0, gap: 4 }, titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   name: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 14, fontWeight: '800' },
   categoryChip: { backgroundColor: BudgetColors.blueSoft, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 5 }, categoryText: { color: BudgetColors.blue, fontFamily: Fonts.sans, fontSize: 9, fontWeight: '800' },
+  metaRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 7 },
   meta: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11 }, details: { flexDirection: 'row', gap: 12, flexWrap: 'wrap' }, detail: { flexDirection: 'row', alignItems: 'center', gap: 4 }, detailText: { color: BudgetColors.faint, fontFamily: Fonts.sans, fontSize: 10 },
+  recurringBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderColor: BudgetColors.infoLine, backgroundColor: BudgetColors.blueSoft, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5 },
+  recurringBadgeText: { color: BudgetColors.blue, fontFamily: Fonts.sans, fontSize: 9, fontWeight: '800', textTransform: 'uppercase' },
   note: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11, lineHeight: 16, marginTop: 2 },
   amountColumn: { alignItems: 'flex-end', gap: 12 }, amount: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 14, fontWeight: '800' },
   rowActions: { flexDirection: 'row', alignItems: 'center', gap: 2 },

@@ -6,6 +6,8 @@ SOURCE_ARCHIVE="${1:-/tmp/homebudget-source.tar.gz}"
 WEB_ARCHIVE="${2:-/tmp/homebudget-web.tar.gz}"
 WEB_SERVICE="expo-app.service"
 API_SERVICE="budget-api.service"
+BACKUP_SERVICE="budget-backup.service"
+BACKUP_TIMER="budget-backup.timer"
 
 if [[ ! -f "$SOURCE_ARCHIVE" || ! -f "$WEB_ARCHIVE" ]]; then
   echo "Deployment archives are missing." >&2
@@ -19,9 +21,11 @@ cd "$APP_ROOT"
 npm install --omit=dev --no-audit --no-fund
 npm --prefix src/server install --omit=dev --no-audit --no-fund
 
-sudo systemd-analyze verify "$APP_ROOT/expo-app.service" "$APP_ROOT/src/server/budget-api.service"
+sudo systemd-analyze verify "$APP_ROOT/expo-app.service" "$APP_ROOT/src/server/budget-api.service" "$APP_ROOT/src/server/$BACKUP_SERVICE" "$APP_ROOT/src/server/$BACKUP_TIMER"
 sudo install -m 644 "$APP_ROOT/expo-app.service" "/etc/systemd/system/$WEB_SERVICE"
 sudo install -m 644 "$APP_ROOT/src/server/budget-api.service" "/etc/systemd/system/$API_SERVICE"
+sudo install -m 644 "$APP_ROOT/src/server/$BACKUP_SERVICE" "/etc/systemd/system/$BACKUP_SERVICE"
+sudo install -m 644 "$APP_ROOT/src/server/$BACKUP_TIMER" "/etc/systemd/system/$BACKUP_TIMER"
 
 rm -rf "$APP_ROOT/dist.new"
 mkdir "$APP_ROOT/dist.new"
@@ -45,8 +49,9 @@ rollback_web() {
 
 trap rollback_web ERR
 sudo systemctl daemon-reload
-sudo systemctl enable "$WEB_SERVICE" "$API_SERVICE" >/dev/null
+sudo systemctl enable "$WEB_SERVICE" "$API_SERVICE" "$BACKUP_TIMER" >/dev/null
 sudo systemctl restart "$API_SERVICE" "$WEB_SERVICE"
+sudo systemctl start "$BACKUP_TIMER"
 
 curl --fail --silent --show-error \
   --retry 15 --retry-connrefused --retry-delay 2 \
@@ -62,4 +67,4 @@ rm -rf "$APP_ROOT/dist.old"
 rm -f "$SOURCE_ARCHIVE" "$WEB_ARCHIVE" /tmp/deploy-pi-remote.sh
 
 echo "HomeBudget deployment complete."
-systemctl is-active "$WEB_SERVICE" "$API_SERVICE"
+systemctl is-active "$WEB_SERVICE" "$API_SERVICE" "$BACKUP_TIMER"

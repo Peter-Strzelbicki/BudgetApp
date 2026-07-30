@@ -56,6 +56,7 @@ try {
         'expo-app.service',
         'assets',
         'src',
+        'scripts/backup-db.sh',
         'scripts/serve-web.py',
         'scripts/deploy-pi-remote.sh'
     )

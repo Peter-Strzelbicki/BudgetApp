@@ -1,0 +1,13 @@
+[Unit]
+Description=HomeBudget database backup
+ConditionPathExists=/home/pstrzelbicki/.config/homebudget-backup.env
+
+[Service]
+Type=oneshot
+User=pstrzelbicki
+Group=pstrzelbicki
+WorkingDirectory=/home/pstrzelbicki/BudgetApp/BudgetApp
+EnvironmentFile=-/home/pstrzelbicki/.config/homebudget-backup.env
+ExecStart=/usr/bin/env bash /home/pstrzelbicki/BudgetApp/BudgetApp/scripts/backup-db.sh
+StandardOutput=journal
+StandardError=journal

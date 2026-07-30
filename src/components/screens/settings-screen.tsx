@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Page, PageHeading, Panel, SectionHeader } from '@/components/budget-ui';
-import { API_URL, getApiStatus, getCategories } from '@/constants/api';
+import { API_URL, BackupStatus, getApiStatus, getBackupStatus, getCategories, runBackupNow } from '@/constants/api';
 import { BudgetColors, Fonts } from '@/constants/theme';
 
 type ConnectionState = 'checking' | 'online' | 'offline';
@@ -13,6 +13,9 @@ export default function SettingsScreen() {
   const [checkedAt, setCheckedAt] = useState<Date | null>(null);
   const [databaseTime, setDatabaseTime] = useState<string | null>(null);
   const [categoryCount, setCategoryCount] = useState(0);
+  const [backupStatus, setBackupStatus] = useState<BackupStatus | null>(null);
+  const [backupLoading, setBackupLoading] = useState(true);
+  const [backupRunning, setBackupRunning] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const check = async () => {
@@ -24,7 +27,33 @@ export default function SettingsScreen() {
       setState('offline'); setMessage(checkError instanceof Error ? checkError.message : 'The API is unreachable.');
     } finally { setCheckedAt(new Date()); }
   };
-  useEffect(() => { check(); }, []);
+
+  const loadBackupStatus = async () => {
+    try {
+      setBackupStatus(await getBackupStatus());
+    } catch {
+      setBackupStatus(null);
+    } finally {
+      setBackupLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    check();
+    void loadBackupStatus();
+  }, []);
+
+  const forceBackup = async () => {
+    setBackupRunning(true);
+    setMessage(null);
+    try {
+      setBackupStatus(await runBackupNow());
+    } catch (runError) {
+      setMessage(runError instanceof Error ? runError.message : 'The backup could not be started.');
+    } finally {
+      setBackupRunning(false);
+    }
+  };
 
   const webUrl = API_URL.replace(/:3000$/, ':8081');
   return <Page>
@@ -48,6 +77,27 @@ export default function SettingsScreen() {
       </View>
     </Panel>
     <Panel>
+      <SectionHeader title="Database backup" detail="Last successful off-site backup and a manual trigger for the Pi" />
+      <View style={styles.backupRow}>
+        <View style={styles.backupIcon}><Database color={BudgetColors.gold} size={20} /></View>
+        <View style={styles.backupCopy}>
+          <Text style={styles.backupTitle}>Last backup</Text>
+          <Text style={styles.backupDetail}>
+            {backupLoading
+              ? 'Checking backup status…'
+              : backupStatus?.last_backup_utc
+                ? `${new Date(backupStatus.last_backup_utc).toLocaleString()}${backupStatus.backup_name ? ` · ${backupStatus.backup_name}` : ''}`
+                : 'No successful backup recorded yet'}
+          </Text>
+          {!backupLoading && backupStatus?.backup_target ? <Text style={styles.backupHint}>Target: {backupStatus.backup_target}</Text> : null}
+        </View>
+        <Pressable disabled={backupRunning} onPress={forceBackup} style={({ pressed }) => [styles.backupButton, backupRunning && styles.backupDisabled, pressed && styles.pressed]}>
+          {backupRunning ? <ActivityIndicator color={BudgetColors.surface} size="small" /> : <RefreshCw color={BudgetColors.surface} size={16} />}
+          <Text style={styles.backupButtonText}>{backupRunning ? 'Running' : 'Force backup'}</Text>
+        </Pressable>
+      </View>
+    </Panel>
+    <Panel>
       <SectionHeader title="Network" detail="Raspberry Pi household deployment" />
       <View style={styles.networkRow}><View style={styles.networkIcon}><Wifi color={BudgetColors.green} size={20} /></View><View style={styles.networkCopy}><Text style={styles.networkTitle}>Private home network</Text><Text style={styles.networkDetail}>192.168.2.107 · Web 8081 · API 3000 · PostgreSQL 5432</Text></View></View>
     </Panel>
@@ -64,5 +114,6 @@ const styles = StyleSheet.create({
   statusCopy: { flex: 1, gap: 3 }, statusTitle: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 14, fontWeight: '800' }, statusDetail: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11 },
   serviceRow: { minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: 12, borderTopWidth: 1, borderTopColor: BudgetColors.line }, serviceIcon: { width: 36, height: 36, borderRadius: 7, backgroundColor: BudgetColors.canvas, alignItems: 'center', justifyContent: 'center' }, serviceCopy: { flex: 1, gap: 3 }, serviceLabel: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 10, fontWeight: '700' }, serviceValue: { color: BudgetColors.ink, fontFamily: Fonts.mono, fontSize: 11 },
   metrics: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 }, metric: { minWidth: 180, flex: 1, padding: 14, borderRadius: 7, backgroundColor: BudgetColors.canvas, gap: 5 }, metricLabel: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 10, fontWeight: '700' }, metricValue: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' }, onlineText: { color: BudgetColors.green }, offlineText: { color: BudgetColors.coral },
+  backupRow: { minHeight: 74, flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap' }, backupIcon: { width: 42, height: 42, borderRadius: 8, backgroundColor: BudgetColors.goldSoft, alignItems: 'center', justifyContent: 'center' }, backupCopy: { flex: 1, minWidth: 210, gap: 3 }, backupTitle: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 13, fontWeight: '800' }, backupDetail: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11 }, backupHint: { color: BudgetColors.faint, fontFamily: Fonts.sans, fontSize: 10 }, backupButton: { minHeight: 42, paddingHorizontal: 14, borderRadius: 8, backgroundColor: BudgetColors.green, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 }, backupButtonText: { color: BudgetColors.surface, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' }, backupDisabled: { opacity: 0.65 },
   networkRow: { flexDirection: 'row', alignItems: 'center', gap: 13 }, networkIcon: { width: 42, height: 42, borderRadius: 8, backgroundColor: BudgetColors.greenSoft, alignItems: 'center', justifyContent: 'center' }, networkCopy: { flex: 1, gap: 3 }, networkTitle: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 13, fontWeight: '800' }, networkDetail: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11 },
 });

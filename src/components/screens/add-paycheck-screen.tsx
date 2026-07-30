@@ -1,18 +1,23 @@
-﻿import { ArrowDownToLine, Plus, Save, Trash2 } from 'lucide-react-native';
+﻿import { ArrowDownToLine, CircleDollarSign, Plus, Save, Trash2 } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 
 import { EmptyState, ErrorNotice, formatCurrency, MonthSwitcher, moveMonth, Page, PageHeading, Panel, SectionHeader } from '@/components/budget-ui';
 import { DateInput } from '@/components/date-input';
-import { addExtraIncome, addJointPayment, ContributionSummary, deleteExtraIncome, deleteJointPayment, ExtraIncome, getContributionSummary, getExtraIncome, getIncomeConfig, getJointPayments, IncomeConfig, JointPayment, saveIncomeConfig } from '@/constants/api';
+import { addExtraIncome, addJointPayment, ContributionSummary, deleteExtraIncome, deleteJointPayment, ExtraIncome, getContributionSummary, getExtraIncome, getIncomeConfig, getIncomeSummary, getJointPayments, IncomeConfig, IncomeMonthSummary, JointPayment, saveIncomeConfig } from '@/constants/api';
 import { BudgetColors, Fonts } from '@/constants/theme';
 
 export default function AddPaycheckScreen() {
   const now = new Date();
+  const { width } = useWindowDimensions();
+  const compact = width < 620;
+  const narrow = width < 430;
   const [configs, setConfigs] = useState<IncomeConfig[]>([]);
   const [drafts, setDrafts] = useState<Record<number, string>>({});
   const [anchorDrafts, setAnchorDrafts] = useState<Record<number, string>>({});
   const [configLoading, setConfigLoading] = useState(true);
+  const [incomeSummary, setIncomeSummary] = useState<IncomeMonthSummary[]>([]);
+  const [incomeSummaryLoading, setIncomeSummaryLoading] = useState(true);
   const [saving, setSaving] = useState<Record<number, boolean>>({});
   const [saved, setSaved] = useState<Record<number, boolean>>({});
 
@@ -35,29 +40,32 @@ export default function AddPaycheckScreen() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    getIncomeConfig()
-      .then(rows => {
-        setConfigs(rows);
-        setDrafts(Object.fromEntries(rows.map(row => [row.person_id, String(row.biweekly_amount || '')])));
-        setAnchorDrafts(Object.fromEntries(rows.map(row => [row.person_id, row.payday_anchor || ''])));
-        if (rows.length > 0 && selectedPerson === null) setSelectedPerson(rows[0].person_id);
-      })
-      .catch(err => setError(err instanceof Error ? err.message : 'Could not load income configuration.'))
-      .finally(() => setConfigLoading(false));
-  }, []);
-
-  useEffect(() => {
     setPaymentDate(defaultDate(month, year));
+    setConfigLoading(true);
+    setIncomeSummaryLoading(true);
     setExtrasLoading(true);
     setPaymentsLoading(true);
-    Promise.all([getExtraIncome(month, year), getJointPayments(month, year), getContributionSummary(month, year)])
-      .then(([extraRows, paymentRows, contributionSummary]) => {
+    Promise.all([
+      getIncomeConfig(month, year),
+      getExtraIncome(month, year),
+      getJointPayments(month, year),
+      getContributionSummary(month, year),
+      getIncomeSummary(year),
+    ])
+      .then(([configRows, extraRows, paymentRows, contributionSummary, summaryRows]) => {
+        setConfigs(configRows);
+        setDrafts(Object.fromEntries(configRows.map(row => [row.person_id, String(row.biweekly_amount || '')])));
+        setAnchorDrafts(Object.fromEntries(configRows.map(row => [row.person_id, row.payday_anchor || ''])));
+        setSelectedPerson(current => configRows.some(row => row.person_id === current) ? current : configRows[0]?.person_id ?? null);
         setExtras(extraRows);
         setPayments(paymentRows);
         setContribution(contributionSummary);
+        setIncomeSummary(summaryRows);
       })
       .catch(err => setError(err instanceof Error ? err.message : 'Could not load monthly income and payment details.'))
       .finally(() => {
+        setConfigLoading(false);
+        setIncomeSummaryLoading(false);
         setExtrasLoading(false);
         setPaymentsLoading(false);
       });
@@ -80,9 +88,14 @@ export default function AddPaycheckScreen() {
     setSaved(current => ({ ...current, [personId]: false }));
     setError(null);
     try {
-      await saveIncomeConfig(personId, amount, paydayAnchor);
-      setConfigs(current => current.map(c => c.person_id === personId ? { ...c, biweekly_amount: amount, payday_anchor: paydayAnchor } : c));
-      setContribution(await getContributionSummary(month, year));
+      await saveIncomeConfig(personId, month, year, amount, paydayAnchor);
+      setConfigs(current => current.map(c => c.person_id === personId ? { ...c, biweekly_amount: amount, payday_anchor: paydayAnchor, source_month: month, source_year: year } : c));
+      const [contributionSummary, summaryRows] = await Promise.all([
+        getContributionSummary(month, year),
+        getIncomeSummary(year),
+      ]);
+      setContribution(contributionSummary);
+      setIncomeSummary(summaryRows);
       setSaved(current => ({ ...current, [personId]: true }));
       setTimeout(() => setSaved(current => ({ ...current, [personId]: false })), 2500);
     } catch (saveError) {
@@ -146,8 +159,14 @@ export default function AddPaycheckScreen() {
     setError(null);
     try {
       await addExtraIncome({ person_id: selectedPerson, month, year, amount, description: extraDesc.trim() || undefined });
-      const rows = await getExtraIncome(month, year);
+      const [rows, contributionSummary, summaryRows] = await Promise.all([
+        getExtraIncome(month, year),
+        getContributionSummary(month, year),
+        getIncomeSummary(year),
+      ]);
       setExtras(rows);
+      setContribution(contributionSummary);
+      setIncomeSummary(summaryRows);
       setExtraAmount('');
       setExtraDesc('');
     } catch (addError) {
@@ -162,7 +181,13 @@ export default function AddPaycheckScreen() {
     setError(null);
     try {
       await deleteExtraIncome(id);
+      const [contributionSummary, summaryRows] = await Promise.all([
+        getContributionSummary(month, year),
+        getIncomeSummary(year),
+      ]);
       setExtras(current => current.filter(e => e.extra_income_id !== id));
+      setContribution(contributionSummary);
+      setIncomeSummary(summaryRows);
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : 'Could not remove extra income.');
     } finally {
@@ -173,6 +198,8 @@ export default function AddPaycheckScreen() {
   const totalMonthly = configs.reduce((sum, c) => sum + (c.biweekly_amount || 0) * 2, 0);
   const extrasTotal = extras.reduce((sum, e) => sum + e.amount, 0);
   const paymentsTotal = payments.reduce((sum, payment) => sum + payment.amount, 0);
+  const monthLabel = new Date(year, month - 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  const incomeMax = Math.max(...incomeSummary.map(row => row.total_income), 1);
 
   return (
     <Page>
@@ -180,43 +207,86 @@ export default function AddPaycheckScreen() {
         eyebrow="Configuration"
         title="Income"
         description="Set regular bi-weekly pay, payday schedules, and payments to the joint account."
+        action={<MonthSwitcher month={month} year={year} onPrevious={() => changeMonth(-1)} onNext={() => changeMonth(1)} />}
       />
       {error && <ErrorNotice message={error} onRetry={undefined} />}
 
+      <Panel style={styles.monthlyIncomePanel}>
+        <View style={styles.monthlyIncomeSummary}>
+          <View style={styles.monthlyIncomeIcon}><CircleDollarSign color={BudgetColors.green} size={20} /></View>
+          <View style={styles.monthlyIncomeCopy}>
+            <Text style={styles.monthlyIncomeLabel}>Total monthly income</Text>
+            <Text style={styles.monthlyIncomeDetail}>{monthLabel} · {formatCurrency(totalMonthly, 2)} regular + {formatCurrency(extrasTotal, 2)} extra</Text>
+          </View>
+          <Text style={[styles.monthlyIncomeAmount, narrow && styles.monthlyIncomeAmountNarrow]}>{formatCurrency(totalMonthly + extrasTotal, 2)}</Text>
+        </View>
+      </Panel>
+
       <Panel>
-        <SectionHeader title="Bi-weekly pay" detail={totalMonthly > 0 ? `${formatCurrency(totalMonthly, 2)} combined monthly - schedules repeat every 14 days` : 'Enter regular bi-weekly pay below'} />
+        <SectionHeader title="Bi-weekly pay" detail={totalMonthly > 0 ? `${monthLabel} - ${formatCurrency(totalMonthly, 2)} regular monthly income` : `${monthLabel} - enter regular bi-weekly pay below`} />
         {configLoading ? <View style={styles.loader}><ActivityIndicator color={BudgetColors.green} /></View> : configs.map((config, index) => (
-          <View key={config.person_id} style={[styles.row, index === 0 && styles.rowFirst]}>
-            <View style={styles.rowCopy}>
+          <View key={config.person_id} style={[styles.row, index === 0 && styles.rowFirst, compact && styles.configRowCompact]}>
+            <View style={[styles.rowCopy, compact && styles.configRowCopyCompact]}>
               <Text style={styles.name}>{config.name}</Text>
               <Text style={styles.detail}>Monthly: {formatCurrency((Number(drafts[config.person_id]) || 0) * 2, 2)}</Text>
             </View>
-            <View style={styles.configFields}>
-              <View style={styles.configField}>
+            <View style={[styles.configFields, compact && styles.configFieldsCompact]}>
+              <View style={[styles.configField, compact && styles.configFieldCompact]}>
                 <Text style={styles.fieldLabel}>Pay per check</Text>
-                <View style={styles.inputWrap}>
+                <View style={[styles.inputWrap, compact && styles.configInputCompact]}>
                   <Text style={styles.dollar}>$</Text>
                   <TextInput value={drafts[config.person_id] ?? ''} onChangeText={value => { setDrafts(c => ({ ...c, [config.person_id]: value.replace(/[^0-9.]/g, '') })); setSaved(c => ({ ...c, [config.person_id]: false })); }} onSubmitEditing={() => saveConfig(config.person_id)} keyboardType="decimal-pad" selectTextOnFocus placeholder="0.00" placeholderTextColor={BudgetColors.faint} style={styles.input} />
                 </View>
               </View>
-              <View style={styles.anchorField}>
+              <View style={[styles.anchorField, compact && styles.anchorFieldCompact]}>
                 <Text style={styles.fieldLabel}>Payday anchor</Text>
                 <DateInput value={anchorDrafts[config.person_id] ?? ''} onChange={value => { setAnchorDrafts(current => ({ ...current, [config.person_id]: value })); setSaved(current => ({ ...current, [config.person_id]: false })); }} />
               </View>
             </View>
-            <Pressable accessibilityLabel={`Save ${config.name} income schedule`} disabled={saving[config.person_id]} onPress={() => saveConfig(config.person_id)} style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}>
-              {saving[config.person_id] ? <ActivityIndicator color={BudgetColors.green} size="small" /> : <Save color={BudgetColors.green} size={16} />}
-            </Pressable>
-            {saved[config.person_id] && !saving[config.person_id] && <Text style={styles.savedLabel}>Saved</Text>}
+            <View style={[styles.configActions, compact && styles.configActionsCompact]}>
+              {saved[config.person_id] && !saving[config.person_id] && <Text style={styles.savedLabel}>Saved</Text>}
+              <Pressable accessibilityLabel={`Save ${config.name} income schedule`} disabled={saving[config.person_id]} onPress={() => saveConfig(config.person_id)} style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}>
+                {saving[config.person_id] ? <ActivityIndicator color={BudgetColors.green} size="small" /> : <Save color={BudgetColors.green} size={16} />}
+              </Pressable>
+            </View>
           </View>
         ))}
+      </Panel>
+
+      <Panel>
+        <SectionHeader title={`${year} income by month`} detail="Extra income is included in totals but does not change joint-account shares." />
+        {incomeSummaryLoading ? <View style={styles.loader}><ActivityIndicator color={BudgetColors.green} /></View> : (
+          <View style={styles.incomeChart}>
+            <View style={styles.incomeChartLegend}>
+              <View style={styles.legendItem}><View style={[styles.legendSwatch, styles.incomeBarRegular]} /><Text style={styles.legendText}>Regular</Text></View>
+              <View style={styles.legendItem}><View style={[styles.legendSwatch, styles.incomeBarExtra]} /><Text style={styles.legendText}>Extra</Text></View>
+            </View>
+            {incomeSummary.map(row => (
+              <View key={row.month} style={[styles.incomeMonthRow, row.month === month && styles.incomeMonthRowSelected]}>
+                <View style={styles.incomeMonthCopy}>
+                  <Text style={styles.incomeMonthName}>{MONTH_SHORT[row.month - 1]}</Text>
+                </View>
+                <View style={styles.incomeBarWrap}>
+                  <View style={styles.incomeBarTrack}>
+                    <View style={[styles.incomeBarRegular, { width: `${Math.max(row.regular_income / incomeMax * 100, 0)}%` }]} />
+                    <View style={[styles.incomeBarExtra, { width: `${Math.max(row.extra_income / incomeMax * 100, 0)}%` }]} />
+                  </View>
+                  {compact && <Text style={styles.incomeMonthDetail}>Regular {formatCurrency(row.regular_income, 2)} · Extra {formatCurrency(row.extra_income, 2)}</Text>}
+                </View>
+                <View style={styles.incomeTotalWrap}>
+                  <Text style={styles.incomeTotalAmount}>{formatCurrency(row.total_income, 2)}</Text>
+                  {!compact && <Text style={styles.incomeMonthDetail}>Regular {formatCurrency(row.regular_income, 2)} · Extra {formatCurrency(row.extra_income, 2)}</Text>}
+                </View>
+              </View>
+            ))}
+          </View>
+        )}
       </Panel>
 
       <Panel>
         <SectionHeader
           title="Joint account payments"
           detail={`${formatCurrency(paymentsTotal, 2)} paid this month${contribution ? ` - balances as of ${formatShortDate(contribution.as_of_date)}` : ''}`}
-          action={<MonthSwitcher month={month} year={year} onPrevious={() => changeMonth(-1)} onNext={() => changeMonth(1)} />}
         />
         {contribution && (
           <View style={styles.balanceGrid}>
@@ -315,6 +385,9 @@ export default function AddPaycheckScreen() {
   );
 }
 
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const MONTH_SHORT = MONTH_NAMES.map(name => name.slice(0, 3));
+
 function defaultDate(month: number, year: number) {
   const today = new Date();
   if (today.getFullYear() === year && today.getMonth() + 1 === month) {
@@ -335,20 +408,52 @@ function formatShortDate(value: string) {
 
 const styles = StyleSheet.create({
   loader: { minHeight: 60, alignItems: 'center', justifyContent: 'center' },
+  monthlyIncomePanel: { backgroundColor: BudgetColors.greenSoft, borderColor: BudgetColors.successLine },
+  monthlyIncomeSummary: { minHeight: 62, flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap' },
+  monthlyIncomeIcon: { width: 40, height: 40, borderRadius: 7, backgroundColor: BudgetColors.surface, alignItems: 'center', justifyContent: 'center' },
+  monthlyIncomeCopy: { flex: 1, minWidth: 190, gap: 3 },
+  monthlyIncomeLabel: { color: BudgetColors.green, fontFamily: Fonts.sans, fontSize: 10, fontWeight: '800', textTransform: 'uppercase' },
+  monthlyIncomeDetail: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11 },
+  monthlyIncomeAmount: { color: BudgetColors.ink, fontFamily: Fonts.serif, fontSize: 26, fontWeight: '700' },
+  monthlyIncomeAmountNarrow: { width: '100%', marginTop: 4, paddingLeft: 52, textAlign: 'left' },
   row: { minHeight: 82, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 12, borderTopWidth: 1, borderTopColor: BudgetColors.line, flexWrap: 'wrap' },
   rowFirst: { borderTopWidth: 0 },
   rowCopy: { flex: 1, gap: 3 },
+  configRowCompact: { flexDirection: 'column', alignItems: 'stretch' },
+  configRowCopyCompact: { flexGrow: 0, flexShrink: 0, flexBasis: 'auto', width: '100%' },
   name: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 13, fontWeight: '800' },
   detail: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11 },
   configFields: { flex: 2, minWidth: 300, flexDirection: 'row', alignItems: 'flex-end', gap: 8, flexWrap: 'wrap' },
+  configFieldsCompact: { flexGrow: 0, flexShrink: 0, flexBasis: 'auto', minWidth: 0, width: '100%', flexDirection: 'column', alignItems: 'stretch' },
   configField: { width: 148, gap: 5 },
+  configFieldCompact: { width: '100%' },
   anchorField: { flex: 1, minWidth: 190, gap: 5 },
+  anchorFieldCompact: { flexGrow: 0, flexShrink: 0, flexBasis: 'auto', minWidth: 0, width: '100%' },
   fieldLabel: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 9, fontWeight: '800', textTransform: 'uppercase' },
   inputWrap: { width: 148, height: 42, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: BudgetColors.line, borderRadius: 7, backgroundColor: BudgetColors.canvas, overflow: 'hidden' },
+  configInputCompact: { width: '100%' },
   dollar: { color: BudgetColors.muted, paddingLeft: 10, fontFamily: Fonts.sans, fontSize: 13, flexShrink: 0 },
   input: { flex: 1, minWidth: 0, height: 40, paddingHorizontal: 7, textAlign: 'right', color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 14, fontWeight: '800' },
   iconButton: { width: 38, height: 38, borderRadius: 7, alignItems: 'center', justifyContent: 'center', backgroundColor: BudgetColors.greenSoft },
-  savedLabel: { color: BudgetColors.green, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '800', marginLeft: 4 },
+  configActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  configActionsCompact: { alignSelf: 'stretch', justifyContent: 'flex-end' },
+  savedLabel: { color: BudgetColors.green, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '800' },
+  incomeChart: { borderTopWidth: 1, borderTopColor: BudgetColors.line, gap: 2 },
+  incomeChartLegend: { marginTop: 8, flexDirection: 'row', justifyContent: 'flex-end', gap: 12 },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  legendSwatch: { width: 12, height: 12, borderRadius: 3 },
+  legendText: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 10, fontWeight: '700' },
+  incomeMonthRow: { minHeight: 64, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 12, borderBottomWidth: 1, borderBottomColor: BudgetColors.line },
+  incomeMonthRowSelected: { backgroundColor: BudgetColors.greenSoft },
+  incomeMonthCopy: { width: 38, alignItems: 'flex-start' },
+  incomeMonthName: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' },
+  incomeBarWrap: { flex: 1, minWidth: 0, gap: 6 },
+  incomeBarTrack: { height: 16, borderRadius: 999, overflow: 'hidden', borderWidth: 1, borderColor: BudgetColors.line, backgroundColor: BudgetColors.canvas, flexDirection: 'row' },
+  incomeBarRegular: { height: '100%', backgroundColor: BudgetColors.green },
+  incomeBarExtra: { height: '100%', backgroundColor: BudgetColors.blue },
+  incomeTotalWrap: { width: 128, alignItems: 'flex-end', gap: 3 },
+  incomeTotalAmount: { color: BudgetColors.ink, fontFamily: Fonts.serif, fontSize: 16, fontWeight: '700' },
+  incomeMonthDetail: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 10 },
   choices: { flexDirection: 'row', gap: 8, marginBottom: 12 },
   choice: { paddingHorizontal: 13, paddingVertical: 9, borderRadius: 7, borderWidth: 1, borderColor: BudgetColors.line, backgroundColor: BudgetColors.canvas },
   choiceSelected: { borderColor: BudgetColors.green, backgroundColor: BudgetColors.greenSoft },

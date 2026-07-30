@@ -90,12 +90,14 @@ function calculateContributionSummary({
     transfersByPerson.set(personId, (transfersByPerson.get(personId) || 0) + Number(payment.amount || 0));
   }
 
-  const monthlyByPerson = new Map();
+  const regularMonthlyByPerson = new Map();
   for (const [personId, biweekly] of biweeklyByPerson) {
-    monthlyByPerson.set(personId, biweekly * payPeriods + (extraByPerson.get(personId) || 0));
+    regularMonthlyByPerson.set(personId, biweekly * payPeriods);
   }
 
-  const householdIncome = Array.from(monthlyByPerson.values()).reduce((sum, amount) => sum + amount, 0);
+  const regularHouseholdIncome = Array.from(regularMonthlyByPerson.values()).reduce((sum, amount) => sum + amount, 0);
+  const extraHouseholdIncome = Array.from(extraByPerson.values()).reduce((sum, amount) => sum + amount, 0);
+  const householdIncome = regularHouseholdIncome + extraHouseholdIncome;
   const monthlyExpenses = Number(plannedExpenses) || 0;
 
   return {
@@ -106,8 +108,9 @@ function calculateContributionSummary({
       const personId = Number(person.person_id);
       const biweekly = biweeklyByPerson.get(personId) || 0;
       const extra = extraByPerson.get(personId) || 0;
-      const monthlyIncome = biweekly * payPeriods + extra;
-      const incomeShare = householdIncome > 0 ? monthlyIncome / householdIncome : 0;
+      const regularMonthlyIncome = biweekly * payPeriods;
+      const monthlyIncome = regularMonthlyIncome + extra;
+      const incomeShare = regularHouseholdIncome > 0 ? regularMonthlyIncome / regularHouseholdIncome : 0;
       const monthlyShare = monthlyExpenses * incomeShare;
       const paidPersonally = expensesByPerson.get(personId) || 0;
       const transferredToJoint = transfersByPerson.get(personId) || 0;

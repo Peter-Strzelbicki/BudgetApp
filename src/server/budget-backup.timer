@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the HomeBudget database backup monthly
+
+[Timer]
+OnCalendar=monthly
+Persistent=true
+RandomizedDelaySec=12h
+Unit=budget-backup.service
+
+[Install]
+WantedBy=timers.target

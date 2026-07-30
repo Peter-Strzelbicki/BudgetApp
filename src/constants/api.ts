@@ -42,6 +42,8 @@ export interface Transaction {
   subcategory_id: number;
   category_id: number;
   paid_by_person_id: number | null;
+  recurring_id: number | null;
+  is_recurring: boolean;
   transaction_date: string;
   amount: number;
   location: string | null;
@@ -121,6 +123,16 @@ export interface IncomeConfig {
   name: string;
   biweekly_amount: number;
   payday_anchor: string | null;
+  source_month: number | null;
+  source_year: number | null;
+}
+
+export interface IncomeMonthSummary {
+  month: number;
+  year: number;
+  regular_income: number;
+  extra_income: number;
+  total_income: number;
 }
 
 export interface Category {
@@ -160,6 +172,13 @@ export interface Goal {
   goal_id: number;
   year: number;
   description: string;
+}
+
+export interface BackupStatus {
+  last_backup_utc: string | null;
+  backup_name: string | null;
+  backup_size_bytes: number | null;
+  backup_target: string | null;
 }
 
 interface ImportSheetSummary {
@@ -277,6 +296,38 @@ export async function getApiStatus() {
   return rows[0];
 }
 
+export async function getBackupStatus(): Promise<BackupStatus> {
+  const result = await requestJson<{
+    last_backup_utc: string | null;
+    backup_name: string | null;
+    backup_size_bytes: number | string | null;
+    backup_target: string | null;
+  }>('/backup-status');
+
+  return {
+    last_backup_utc: result.last_backup_utc,
+    backup_name: result.backup_name,
+    backup_size_bytes: result.backup_size_bytes === null ? null : Number(result.backup_size_bytes),
+    backup_target: result.backup_target,
+  };
+}
+
+export async function runBackupNow(): Promise<BackupStatus> {
+  const result = await requestJson<{
+    last_backup_utc: string | null;
+    backup_name: string | null;
+    backup_size_bytes: number | string | null;
+    backup_target: string | null;
+  }>('/backup-now', { method: 'POST' }, 1);
+
+  return {
+    last_backup_utc: result.last_backup_utc,
+    backup_name: result.backup_name,
+    backup_size_bytes: result.backup_size_bytes === null ? null : Number(result.backup_size_bytes),
+    backup_target: result.backup_target,
+  };
+}
+
 export async function getMonthlySummary(year: number): Promise<MonthlySummary[]> {
   const rows = await requestJson<{ month: number | string; total: number | string }[]>(
     `/summary/monthly?year=${year}`,
@@ -322,7 +373,11 @@ export async function getTransactions(month?: number, year?: number): Promise<Tr
   if (month) params.set('month', String(month));
   if (year) params.set('year', String(year));
   const suffix = params.toString();
-  const rows = await requestJson<(Omit<Transaction, 'amount'> & { amount: number | string })[]>(
+  const rows = await requestJson<(Omit<Transaction, 'amount' | 'is_recurring' | 'recurring_id'> & {
+    amount: number | string;
+    is_recurring: boolean | number;
+    recurring_id: number | string | null;
+  })[]>(
     `/transactions${suffix ? `?${suffix}` : ''}`,
   );
   return rows.map(row => ({
@@ -331,12 +386,18 @@ export async function getTransactions(month?: number, year?: number): Promise<Tr
     subcategory_id: Number(row.subcategory_id),
     category_id: Number(row.category_id),
     paid_by_person_id: row.paid_by_person_id === null ? null : Number(row.paid_by_person_id),
+    recurring_id: row.recurring_id === null ? null : Number(row.recurring_id),
+    is_recurring: Boolean(Number(row.is_recurring)),
     amount: Number(row.amount),
   }));
 }
 
 export async function getTransaction(transactionId: number): Promise<Transaction> {
-  const row = await requestJson<Omit<Transaction, 'amount'> & { amount: number | string }>(
+  const row = await requestJson<Omit<Transaction, 'amount' | 'is_recurring' | 'recurring_id'> & {
+    amount: number | string;
+    is_recurring: boolean | number;
+    recurring_id: number | string | null;
+  }>(
     `/transactions/${transactionId}`,
   );
   return {
@@ -345,6 +406,8 @@ export async function getTransaction(transactionId: number): Promise<Transaction
     subcategory_id: Number(row.subcategory_id),
     category_id: Number(row.category_id),
     paid_by_person_id: row.paid_by_person_id === null ? null : Number(row.paid_by_person_id),
+    recurring_id: row.recurring_id === null ? null : Number(row.recurring_id),
+    is_recurring: Boolean(Number(row.is_recurring)),
     amount: Number(row.amount),
   };
 }
@@ -502,16 +565,45 @@ export async function getContributionSummary(month: number, year: number): Promi
   };
 }
 
-export function getIncomeConfig() {
-  return requestJson<IncomeConfig[]>('/income-config');
+export async function getIncomeConfig(month: number, year: number): Promise<IncomeConfig[]> {
+  const rows = await requestJson<(Omit<IncomeConfig, 'person_id' | 'biweekly_amount' | 'source_month' | 'source_year'> & {
+    person_id: number | string;
+    biweekly_amount: number | string;
+    source_month: number | string | null;
+    source_year: number | string | null;
+  })[]>(`/income-config?month=${month}&year=${year}`);
+  return rows.map(row => ({
+    ...row,
+    person_id: Number(row.person_id),
+    biweekly_amount: Number(row.biweekly_amount),
+    source_month: row.source_month === null ? null : Number(row.source_month),
+    source_year: row.source_year === null ? null : Number(row.source_year),
+  }));
 }
 
-export function saveIncomeConfig(personId: number, biweeklyAmount: number, paydayAnchor?: string | null) {
-  return requestJson<{ person_id: number; biweekly_amount: number }>(`/income-config/${personId}`, {
+export function saveIncomeConfig(personId: number, month: number, year: number, biweeklyAmount: number, paydayAnchor?: string | null) {
+  return requestJson<{ person_id: number; month: number; year: number; biweekly_amount: number; payday_anchor: string | null }>(`/income-config/${personId}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ biweekly_amount: biweeklyAmount, payday_anchor: paydayAnchor }),
+    body: JSON.stringify({ month, year, biweekly_amount: biweeklyAmount, payday_anchor: paydayAnchor }),
   }, 1);
+}
+
+export async function getIncomeSummary(year: number): Promise<IncomeMonthSummary[]> {
+  const rows = await requestJson<{
+    month: number | string;
+    year: number | string;
+    regular_income: number | string;
+    extra_income: number | string;
+    total_income: number | string;
+  }[]>(`/income-summary?year=${year}`);
+  return rows.map(row => ({
+    month: Number(row.month),
+    year: Number(row.year),
+    regular_income: Number(row.regular_income),
+    extra_income: Number(row.extra_income),
+    total_income: Number(row.total_income),
+  }));
 }
 
 export function getExtraIncome(month: number, year: number) {
