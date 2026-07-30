@@ -16,14 +16,14 @@ export interface MonthlySummary {
   total: number;
 }
 
-export interface YtdCategoryAverage {
+interface YtdCategoryAverage {
   category_id: number;
   category: string;
   total: number;
   monthly_average: number;
 }
 
-export interface YtdMonthVariance {
+interface YtdMonthVariance {
   month: number;
   planned: number;
   actual: number;
@@ -69,7 +69,7 @@ export interface Paycheck {
   transferred_amount: number;
 }
 
-export interface ContributionPerson {
+interface ContributionPerson {
   person_id: number;
   name: string;
   biweekly_amount: number;
@@ -162,7 +162,7 @@ export interface Goal {
   description: string;
 }
 
-export interface ImportSheetSummary {
+interface ImportSheetSummary {
   name: string;
   year: number;
   month: number;
@@ -171,13 +171,13 @@ export interface ImportSheetSummary {
   generated_transactions: number;
 }
 
-export interface ImportWarning {
+interface ImportWarning {
   sheet: string;
   cell: string | null;
   message: string;
 }
 
-export interface ImportBudgetSample {
+interface ImportBudgetSample {
   source_sheet: string;
   year: number;
   month: number;
@@ -186,7 +186,7 @@ export interface ImportBudgetSample {
   projected_amount: number;
 }
 
-export interface ImportTransactionSample {
+interface ImportTransactionSample {
   source_sheet: string;
   category: string;
   subcategory: string;

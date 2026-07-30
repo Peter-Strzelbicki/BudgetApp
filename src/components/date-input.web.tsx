@@ -1,5 +1,4 @@
 import { CalendarDays } from 'lucide-react-native';
-import { useRef } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { BudgetColors, Fonts } from '@/constants/theme';
@@ -11,20 +10,9 @@ interface DateInputProps {
 }
 
 export function DateInput({ value, onChange, placeholder = 'Select a date' }: DateInputProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
-
   const formatted = value
     ? new Date(`${value}T12:00:00`).toLocaleDateString('en-CA', { year: 'numeric', month: 'short', day: 'numeric' })
     : '';
-
-  const open = () => {
-    if (!inputRef.current) return;
-    if (typeof (inputRef.current as any).showPicker === 'function') {
-      (inputRef.current as any).showPicker();
-    } else {
-      inputRef.current.click();
-    }
-  };
 
   return (
     <View style={styles.container}>
@@ -33,7 +21,6 @@ export function DateInput({ value, onChange, placeholder = 'Select a date' }: Da
       <View style={styles.iconWrap}>
         <CalendarDays color={BudgetColors.green} size={19} />
         <input
-          ref={inputRef}
           type="date"
           value={value}
           onChange={(e) => onChange(e.target.value)}

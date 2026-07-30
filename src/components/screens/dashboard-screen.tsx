@@ -102,7 +102,6 @@ export default function DashboardScreen() {
   const incomeRemaining = monthlyIncome - monthSpend;
   const spendPct = monthlyIncome > 0 ? Math.min(monthSpend / monthlyIncome * 100, 100) : 0;
   const maxMonth = Math.max(...totalsByMonth, 1);
-  const maxYtdAverage = Math.max(...(ytd?.category_averages.map(category => category.monthly_average) || []), 1);
   const selectedMonthName = new Date(year, selectedMonth - 1, 1).toLocaleDateString('en-CA', { month: 'long' });
 
   return (
