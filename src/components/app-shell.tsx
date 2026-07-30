@@ -1,14 +1,19 @@
 import { Href, router, usePathname } from 'expo-router';
+
+const ADD_PAYCHECK = '/add-paycheck' as Href;
 import {
     ChartNoAxesColumnIncreasing,
     CircleDollarSign,
+    DollarSign,
     FileUp,
     LayoutDashboard,
     Menu,
+    Moon,
     Plus,
     ReceiptText,
     Settings,
     Target,
+    Sun,
     WalletCards,
     X,
 } from 'lucide-react-native';
@@ -16,6 +21,7 @@ import {
   import { Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import { BudgetColors, Fonts, MaxContentWidth } from '@/constants/theme';
+import { useBudgetTheme } from '@/hooks/use-budget-theme';
 
 const navItems = [
   { label: 'Overview', href: '/' as Href, icon: LayoutDashboard },
@@ -36,6 +42,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { width } = useWindowDimensions();
   const compact = width < 1040;
   const [menuOpen, setMenuOpen] = useState(false);
+  const { mode, toggle: toggleTheme } = useBudgetTheme();
 
   useEffect(() => {
     setMenuOpen(false);
@@ -66,6 +73,13 @@ export function AppShell({ children }: { children: ReactNode }) {
 
           {compact ? (
             <View style={styles.compactActions}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Add paycheck"
+                onPress={() => router.push(ADD_PAYCHECK)}
+                style={({ pressed }) => [styles.compactPaycheckButton, pressed && styles.pressed]}>
+                <DollarSign color={BudgetColors.green} size={19} strokeWidth={2.5} />
+              </Pressable>
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Add transaction"
@@ -118,11 +132,27 @@ export function AppShell({ children }: { children: ReactNode }) {
               <View style={styles.headerActions}>
                 <Pressable
                   accessibilityRole="button"
+                  accessibilityLabel="Add paycheck"
+                  onPress={() => router.push(ADD_PAYCHECK)}
+                  style={({ pressed }) => [styles.paycheckButton, pressed && styles.pressed]}>
+                  <DollarSign color={BudgetColors.green} size={19} strokeWidth={2.5} />
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
                   accessibilityLabel="Add transaction"
                   onPress={() => router.push('/add-transaction')}
                   style={({ pressed }) => [styles.addButton, pressed && styles.pressed]}>
                   <Plus color={BudgetColors.surface} size={18} strokeWidth={2.5} />
                   <Text style={styles.addButtonText}>Add transaction</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Switch to ${mode === 'dark' ? 'light' : 'dark'} mode`}
+                  onPress={toggleTheme}
+                  style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}>
+                  {mode === 'dark'
+                    ? <Sun color={BudgetColors.ink} size={19} />
+                    : <Moon color={BudgetColors.ink} size={19} />}
                 </Pressable>
                 <Pressable
                   accessibilityRole="link"
@@ -195,14 +225,42 @@ export function AppShell({ children }: { children: ReactNode }) {
 
             <Pressable
               accessibilityRole="button"
-              onPress={() => {
-                setMenuOpen(false);
-                router.push('/add-transaction');
-              }}
-              style={({ pressed }) => [styles.mobileAddButton, pressed && styles.pressed]}>
-              <Plus color={BudgetColors.surface} size={19} strokeWidth={2.5} />
-              <Text style={styles.mobileAddButtonText}>Add transaction</Text>
+              accessibilityLabel={`Switch to ${mode === 'dark' ? 'light' : 'dark'} mode`}
+              onPress={toggleTheme}
+              style={({ pressed }) => [styles.mobileThemeButton, pressed && styles.pressed]}>
+              <View style={styles.mobileThemeIcon}>
+                {mode === 'dark'
+                  ? <Sun color={BudgetColors.gold} size={19} />
+                  : <Moon color={BudgetColors.blue} size={19} />}
+              </View>
+              <View style={styles.mobileThemeCopy}>
+                <Text style={styles.mobileThemeTitle}>{mode === 'dark' ? 'Light mode' : 'Dark mode'}</Text>
+                <Text style={styles.mobileThemeDetail}>Change the appearance on this device</Text>
+              </View>
             </Pressable>
+
+            <View style={styles.mobileAddRow}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Add paycheck"
+                onPress={() => {
+                  setMenuOpen(false);
+                  router.push(ADD_PAYCHECK);
+                }}
+                style={({ pressed }) => [styles.mobilePaycheckButton, pressed && styles.pressed]}>
+                <DollarSign color={BudgetColors.green} size={20} strokeWidth={2.5} />
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  setMenuOpen(false);
+                  router.push('/add-transaction');
+                }}
+                style={({ pressed }) => [styles.mobileAddButton, pressed && styles.pressed]}>
+                <Plus color={BudgetColors.surface} size={19} strokeWidth={2.5} />
+                <Text style={styles.mobileAddButtonText}>Add transaction</Text>
+              </Pressable>
+            </View>
           </View>
         </View>
       </Modal>
@@ -309,6 +367,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  compactPaycheckButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: BudgetColors.green,
+    backgroundColor: BudgetColors.greenSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   addButton: {
     height: 40,
     paddingHorizontal: 13,
@@ -324,6 +392,16 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.sans,
     fontSize: 13,
     fontWeight: '700',
+  },
+  paycheckButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: BudgetColors.green,
+    backgroundColor: BudgetColors.greenSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   iconButton: {
     width: 40,
@@ -345,7 +423,7 @@ const styles = StyleSheet.create({
   },
   menuScrim: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(23, 32, 25, 0.38)',
+    backgroundColor: BudgetColors.scrim,
   },
   mobileMenu: {
     width: '86%',
@@ -414,6 +492,7 @@ const styles = StyleSheet.create({
     color: BudgetColors.green,
   },
   mobileAddButton: {
+    flex: 1,
     minHeight: 46,
     borderRadius: 8,
     backgroundColor: BudgetColors.green,
@@ -422,11 +501,60 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
   },
+  mobileAddRow: {
+    flexDirection: 'row',
+    gap: 10,
+    alignItems: 'stretch',
+  },
+  mobilePaycheckButton: {
+    width: 46,
+    minHeight: 46,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: BudgetColors.green,
+    backgroundColor: BudgetColors.greenSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   mobileAddButtonText: {
     color: BudgetColors.surface,
     fontFamily: Fonts.sans,
     fontSize: 13,
     fontWeight: '800',
+  },
+  mobileThemeButton: {
+    minHeight: 58,
+    marginBottom: 12,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: BudgetColors.line,
+    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  mobileThemeIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 7,
+    backgroundColor: BudgetColors.canvas,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mobileThemeCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  mobileThemeTitle: {
+    color: BudgetColors.ink,
+    fontFamily: Fonts.sans,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  mobileThemeDetail: {
+    color: BudgetColors.muted,
+    fontFamily: Fonts.sans,
+    fontSize: 9,
   },
   pressed: {
     opacity: 0.72,

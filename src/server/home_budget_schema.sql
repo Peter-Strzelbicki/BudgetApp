@@ -10,6 +10,8 @@ IF OBJECT_ID(N'dbo.v_monthly_actuals', N'V') IS NOT NULL
     DROP VIEW dbo.v_monthly_actuals;
 IF OBJECT_ID(N'dbo.transactions', N'U') IS NOT NULL
     DROP TABLE dbo.transactions;
+IF OBJECT_ID(N'dbo.paychecks', N'U') IS NOT NULL
+    DROP TABLE dbo.paychecks;
 IF OBJECT_ID(N'dbo.goals', N'U') IS NOT NULL
     DROP TABLE dbo.goals;
 IF OBJECT_ID(N'dbo.budget_lines', N'U') IS NOT NULL
@@ -67,6 +69,17 @@ CREATE TABLE dbo.income (
         REFERENCES dbo.people(person_id),
     CONSTRAINT UQ_income_period_person UNIQUE (period_id, person_id)
 );
+
+CREATE TABLE dbo.paychecks (
+    paycheck_id INT IDENTITY(1,1) PRIMARY KEY,
+    person_id INT NOT NULL,
+    paycheck_date DATE NOT NULL,
+    amount DECIMAL(10,2) NOT NULL CHECK (amount > 0),
+    CONSTRAINT FK_paychecks_people FOREIGN KEY (person_id)
+        REFERENCES dbo.people(person_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IX_paychecks_person_date ON dbo.paychecks(person_id, paycheck_date);
 
 CREATE TABLE dbo.budget_lines (
     budget_line_id INT IDENTITY(1,1) PRIMARY KEY,

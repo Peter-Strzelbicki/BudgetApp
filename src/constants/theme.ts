@@ -7,6 +7,10 @@ import '@/global.css';
 
 import { Platform } from 'react-native';
 
+function themeColor(variable: string, fallback: string) {
+  return Platform.OS === 'web' ? `var(--budget-${variable}, ${fallback})` : fallback;
+}
+
 export const Colors = {
   light: {
     text: '#172019',
@@ -25,20 +29,30 @@ export const Colors = {
 } as const;
 
 export const BudgetColors = {
-  canvas: '#F3F5F0',
-  surface: '#FFFFFF',
-  ink: '#172019',
-  muted: '#667069',
-  faint: '#8C958F',
-  line: '#DDE2DC',
-  green: '#236B53',
-  greenSoft: '#E2EDE6',
-  coral: '#C85B3F',
-  coralSoft: '#F7E5DF',
-  gold: '#D6A63A',
-  goldSoft: '#F8EFD7',
-  blue: '#3E6F8E',
-  blueSoft: '#E1EBF0',
+  canvas: themeColor('canvas', '#F3F5F0'),
+  surface: themeColor('surface', '#FFFFFF'),
+  ink: themeColor('ink', '#172019'),
+  muted: themeColor('muted', '#667069'),
+  faint: themeColor('faint', '#8C958F'),
+  line: themeColor('line', '#DDE2DC'),
+  green: themeColor('green', '#236B53'),
+  greenSoft: themeColor('green-soft', '#E2EDE6'),
+  coral: themeColor('coral', '#C85B3F'),
+  coralSoft: themeColor('coral-soft', '#F7E5DF'),
+  gold: themeColor('gold', '#D6A63A'),
+  goldSoft: themeColor('gold-soft', '#F8EFD7'),
+  blue: themeColor('blue', '#3E6F8E'),
+  blueSoft: themeColor('blue-soft', '#E1EBF0'),
+  successLine: themeColor('success-line', '#C6DCCA'),
+  dangerLine: themeColor('danger-line', '#EDC6B9'),
+  infoLine: themeColor('info-line', '#C8DCE6'),
+  warningLine: themeColor('warning-line', '#E9D499'),
+  warningSurface: themeColor('warning-surface', '#FFFCF4'),
+  warningInk: themeColor('warning-ink', '#8A6516'),
+  warningDivider: themeColor('warning-divider', '#F0E4C4'),
+  bar: themeColor('bar', '#AFC8BA'),
+  barFuture: themeColor('bar-future', '#E8ECE7'),
+  scrim: themeColor('scrim', 'rgba(23, 32, 25, 0.38)'),
 } as const;
 
 export type ThemeColor = keyof typeof Colors.light & keyof typeof Colors.dark;

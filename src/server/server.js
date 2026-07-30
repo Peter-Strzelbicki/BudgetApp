@@ -6,6 +6,7 @@ const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
 const { Pool } = require("pg");
+const { calculateContributionSummary } = require("./contributions");
 const { parseBudgetWorkbook } = require("./import-xlsx");
 const { commitBudgetImport, findUnmatchedPayers } = require("./import-xlsx-db");
 
@@ -144,6 +145,69 @@ async function query(sqlText, params = {}) {
   return result.recordset;
 }
 
+function isIsoDate(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function readMonthYear(req, res) {
+  const month = Number(req.query.month);
+  const year = Number(req.query.year);
+  if (!Number.isInteger(month) || month < 1 || month > 12 || !Number.isInteger(year)) {
+    res.status(400).json({ error: "A valid month and year are required" });
+    return null;
+  }
+  return { month, year };
+}
+
+async function ensureFeatureSchema() {
+  if (dbType === "postgres") {
+    await query(`
+      CREATE TABLE IF NOT EXISTS public.paychecks (
+        paycheck_id BIGSERIAL PRIMARY KEY,
+        person_id INTEGER NOT NULL REFERENCES public.people(person_id) ON DELETE CASCADE,
+        paycheck_date DATE NOT NULL,
+        amount NUMERIC(10, 2) NOT NULL CHECK (amount > 0)
+      )`);
+    await query(`
+      CREATE INDEX IF NOT EXISTS ix_paychecks_person_date
+      ON public.paychecks (person_id, paycheck_date)`);
+    await query(`
+      CREATE TABLE IF NOT EXISTS public.income_config (
+        person_id INTEGER PRIMARY KEY REFERENCES public.people(person_id) ON DELETE CASCADE,
+        biweekly_amount NUMERIC(10, 2) NOT NULL DEFAULT 0
+      )`);
+    return;
+  }
+
+  await query(`
+    IF OBJECT_ID(N'dbo.paychecks', N'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.paychecks (
+        paycheck_id INT IDENTITY(1,1) PRIMARY KEY,
+        person_id INT NOT NULL,
+        paycheck_date DATE NOT NULL,
+        amount DECIMAL(10, 2) NOT NULL CHECK (amount > 0),
+        CONSTRAINT FK_paychecks_people FOREIGN KEY (person_id)
+          REFERENCES dbo.people(person_id) ON DELETE CASCADE
+      );
+    END`);
+  await query(`
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_paychecks_person_date' AND object_id = OBJECT_ID(N'dbo.paychecks'))
+      CREATE INDEX IX_paychecks_person_date ON dbo.paychecks(person_id, paycheck_date)`);
+  await query(`
+    IF OBJECT_ID(N'dbo.income_config', N'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.income_config (
+        person_id INT PRIMARY KEY,
+        biweekly_amount DECIMAL(10,2) NOT NULL DEFAULT 0,
+        CONSTRAINT FK_income_config_people FOREIGN KEY (person_id)
+          REFERENCES dbo.people(person_id) ON DELETE CASCADE
+      );
+    END`);
+}
+
 app.get("/", (req, res) => {
   res.send("Budget API running");
 });
@@ -167,8 +231,9 @@ app.get("/transactions", async (req, res) => {
 
     if (dbType === "postgres") {
       queryText = `
-        SELECT t.transaction_id, t.transaction_date, t.amount, t.location, t.notes,
-               sc.name AS subcategory, c.name AS category, p.name AS paid_by
+         SELECT t.transaction_id, t.subcategory_id, sc.category_id, t.paid_by_person_id,
+           t.transaction_date, t.amount, t.location, t.notes,
+           sc.name AS subcategory, c.name AS category, p.name AS paid_by
         FROM public.transactions t
         JOIN public.subcategories sc ON sc.subcategory_id = t.subcategory_id
         JOIN public.categories c ON c.category_id = sc.category_id
@@ -182,8 +247,9 @@ app.get("/transactions", async (req, res) => {
       }
     } else {
       queryText = `
-        SELECT t.transaction_id, t.transaction_date, t.amount, t.location, t.notes,
-               sc.name AS subcategory, c.name AS category, p.name AS paid_by
+         SELECT t.transaction_id, t.subcategory_id, sc.category_id, t.paid_by_person_id,
+           t.transaction_date, t.amount, t.location, t.notes,
+           sc.name AS subcategory, c.name AS category, p.name AS paid_by
         FROM dbo.transactions t
         JOIN dbo.subcategories sc ON sc.subcategory_id = t.subcategory_id
         JOIN dbo.categories c ON c.category_id = sc.category_id
@@ -206,12 +272,48 @@ app.get("/transactions", async (req, res) => {
   }
 });
 
+app.get("/transactions/:transactionId", async (req, res) => {
+  try {
+    const transactionId = Number(req.params.transactionId);
+    if (!Number.isInteger(transactionId)) {
+      return res.status(400).json({ error: "A valid transaction ID is required" });
+    }
+
+    const queryText = dbType === "postgres"
+      ? `SELECT t.transaction_id, t.subcategory_id, sc.category_id, t.paid_by_person_id,
+                t.transaction_date, t.amount, t.location, t.notes,
+                sc.name AS subcategory, c.name AS category, p.name AS paid_by
+         FROM public.transactions t
+         JOIN public.subcategories sc ON sc.subcategory_id = t.subcategory_id
+         JOIN public.categories c ON c.category_id = sc.category_id
+         LEFT JOIN public.people p ON p.person_id = t.paid_by_person_id
+         WHERE t.transaction_id = @transaction_id`
+      : `SELECT t.transaction_id, t.subcategory_id, sc.category_id, t.paid_by_person_id,
+                t.transaction_date, t.amount, t.location, t.notes,
+                sc.name AS subcategory, c.name AS category, p.name AS paid_by
+         FROM dbo.transactions t
+         JOIN dbo.subcategories sc ON sc.subcategory_id = t.subcategory_id
+         JOIN dbo.categories c ON c.category_id = sc.category_id
+         LEFT JOIN dbo.people p ON p.person_id = t.paid_by_person_id
+         WHERE t.transaction_id = @transaction_id`;
+    const rows = await query(queryText, { transaction_id: transactionId });
+    if (rows.length === 0) {
+      return res.status(404).json({ error: "Transaction not found" });
+    }
+    res.json(rows[0]);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to fetch transaction" });
+  }
+});
+
 app.post("/transactions", async (req, res) => {
   try {
     const { subcategory_id, transaction_date, amount, location, paid_by_person_id, notes } = req.body;
 
-    if (!subcategory_id || !transaction_date || !amount) {
-      return res.status(400).json({ error: "subcategory_id, transaction_date, and amount are required" });
+    if (!Number.isInteger(Number(subcategory_id)) || !isIsoDate(transaction_date) ||
+        !Number.isFinite(Number(amount)) || Number(amount) <= 0) {
+      return res.status(400).json({ error: "Valid subcategory, transaction date, and amount are required" });
     }
 
     if (dbType === "postgres") {
@@ -255,6 +357,70 @@ app.post("/transactions", async (req, res) => {
   }
 });
 
+app.put("/transactions/:transactionId", async (req, res) => {
+  try {
+    const transactionId = Number(req.params.transactionId);
+    const { subcategory_id, transaction_date, amount, location, paid_by_person_id, notes } = req.body;
+    if (!Number.isInteger(transactionId) || !Number.isInteger(Number(subcategory_id)) ||
+        !isIsoDate(transaction_date) || !Number.isFinite(Number(amount)) || Number(amount) <= 0) {
+      return res.status(400).json({ error: "Valid transaction, subcategory, date, and amount are required" });
+    }
+
+    const params = {
+      transaction_id: transactionId,
+      subcategory_id: Number(subcategory_id),
+      transaction_date,
+      amount: Number(amount),
+      location: location || null,
+      paid_by_person_id: paid_by_person_id ? Number(paid_by_person_id) : null,
+      notes: notes || null,
+    };
+
+    if (dbType === "postgres") {
+      const rows = await query(
+        `UPDATE public.transactions
+         SET subcategory_id = @subcategory_id,
+             transaction_date = @transaction_date,
+             amount = @amount,
+             location = @location,
+             paid_by_person_id = @paid_by_person_id,
+             notes = @notes
+         WHERE transaction_id = @transaction_id
+         RETURNING transaction_id`,
+        params
+      );
+      if (rows.length === 0) return res.status(404).json({ error: "Transaction not found" });
+      return res.json({ transaction_id: rows[0].transaction_id });
+    }
+
+    const db = await getDb();
+    const request = db.request();
+    request.input("transaction_id", mssql.Int, transactionId);
+    request.input("subcategory_id", mssql.Int, params.subcategory_id);
+    request.input("transaction_date", mssql.Date, transaction_date);
+    request.input("amount", mssql.Decimal(10, 2), params.amount);
+    request.input("location", mssql.NVarChar(100), params.location);
+    request.input("paid_by_person_id", mssql.Int, params.paid_by_person_id);
+    request.input("notes", mssql.NVarChar(255), params.notes);
+    const result = await request.query(`
+      UPDATE dbo.transactions
+      SET subcategory_id = @subcategory_id,
+          transaction_date = @transaction_date,
+          amount = @amount,
+          location = @location,
+          paid_by_person_id = @paid_by_person_id,
+          notes = @notes
+      OUTPUT INSERTED.transaction_id AS transaction_id
+      WHERE transaction_id = @transaction_id
+    `);
+    if (result.recordset.length === 0) return res.status(404).json({ error: "Transaction not found" });
+    res.json({ transaction_id: result.recordset[0].transaction_id });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to update transaction" });
+  }
+});
+
 app.delete("/transactions/:transactionId", async (req, res) => {
   try {
     const transactionId = Number(req.params.transactionId);
@@ -282,6 +448,177 @@ app.delete("/transactions/:transactionId", async (req, res) => {
   }
 });
 
+app.get("/paychecks", async (req, res) => {
+  try {
+    const period = readMonthYear(req, res);
+    if (!period) return;
+    const queryText = dbType === "postgres"
+      ? `SELECT pc.paycheck_id, pc.person_id, p.name AS person_name, pc.paycheck_date, pc.amount
+         FROM public.paychecks pc
+         JOIN public.people p ON p.person_id = pc.person_id
+         WHERE EXTRACT(MONTH FROM pc.paycheck_date) = @month
+           AND EXTRACT(YEAR FROM pc.paycheck_date) = @year
+         ORDER BY pc.paycheck_date DESC, pc.paycheck_id DESC`
+      : `SELECT pc.paycheck_id, pc.person_id, p.name AS person_name, pc.paycheck_date, pc.amount
+         FROM dbo.paychecks pc
+         JOIN dbo.people p ON p.person_id = pc.person_id
+         WHERE MONTH(pc.paycheck_date) = @month AND YEAR(pc.paycheck_date) = @year
+         ORDER BY pc.paycheck_date DESC, pc.paycheck_id DESC`;
+    res.json(await query(queryText, period));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to fetch paychecks" });
+  }
+});
+
+app.post("/paychecks", async (req, res) => {
+  try {
+    const personId = Number(req.body.person_id);
+    const amount = Number(req.body.amount);
+    const paycheckDate = req.body.paycheck_date;
+    if (!Number.isInteger(personId) || !isIsoDate(paycheckDate) || !Number.isFinite(amount) || amount <= 0) {
+      return res.status(400).json({ error: "Valid person, paycheck date, and amount are required" });
+    }
+
+    const peopleTable = dbType === "postgres" ? "public.people" : "dbo.people";
+    const householdPredicate = dbType === "postgres" ? "is_household = TRUE" : "is_household = 1";
+    const people = await query(
+      `SELECT person_id FROM ${peopleTable}
+       WHERE person_id = @person_id AND ${householdPredicate} AND LOWER(name) <> 'joint'`,
+      { person_id: personId }
+    );
+    if (people.length === 0) {
+      return res.status(400).json({ error: "Choose a household member other than the joint account" });
+    }
+
+    const queryText = dbType === "postgres"
+      ? `INSERT INTO public.paychecks (person_id, paycheck_date, amount)
+         VALUES (@person_id, @paycheck_date, @amount)
+         RETURNING paycheck_id`
+      : `INSERT INTO dbo.paychecks (person_id, paycheck_date, amount)
+         OUTPUT INSERTED.paycheck_id AS paycheck_id
+         VALUES (@person_id, @paycheck_date, @amount)`;
+    const rows = await query(queryText, { person_id: personId, paycheck_date: paycheckDate, amount });
+    res.status(201).json({ paycheck_id: rows[0].paycheck_id });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to add paycheck" });
+  }
+});
+
+app.delete("/paychecks/:paycheckId", async (req, res) => {
+  try {
+    const paycheckId = Number(req.params.paycheckId);
+    if (!Number.isInteger(paycheckId)) {
+      return res.status(400).json({ error: "A valid paycheck ID is required" });
+    }
+    const queryText = dbType === "postgres"
+      ? `DELETE FROM public.paychecks WHERE paycheck_id = @paycheck_id RETURNING paycheck_id`
+      : `DELETE FROM dbo.paychecks OUTPUT DELETED.paycheck_id AS paycheck_id WHERE paycheck_id = @paycheck_id`;
+    const rows = await query(queryText, { paycheck_id: paycheckId });
+    if (rows.length === 0) return res.status(404).json({ error: "Paycheck not found" });
+    res.json({ paycheck_id: rows[0].paycheck_id });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to delete paycheck" });
+  }
+});
+
+app.get("/contributions", async (req, res) => {
+  try {
+    const period = readMonthYear(req, res);
+    if (!period) return;
+    const prefix = dbType === "postgres" ? "public" : "dbo";
+    const householdPredicate = dbType === "postgres" ? "is_household = TRUE" : "is_household = 1";
+    const monthExpression = column => dbType === "postgres"
+      ? `EXTRACT(MONTH FROM ${column}) = @month AND EXTRACT(YEAR FROM ${column}) = @year`
+      : `MONTH(${column}) = @month AND YEAR(${column}) = @year`;
+
+    const [people, incomeConfig, personalExpenses, plannedRows] = await Promise.all([
+      query(
+        `SELECT person_id, name FROM ${prefix}.people
+         WHERE ${householdPredicate} AND LOWER(name) <> 'joint'
+         ORDER BY person_id`,
+        period
+      ),
+      query(
+        `SELECT p.person_id, COALESCE(ic.biweekly_amount, 0) AS biweekly_amount
+         FROM ${prefix}.people p
+         LEFT JOIN ${prefix}.income_config ic ON ic.person_id = p.person_id
+         WHERE ${householdPredicate} AND LOWER(p.name) <> 'joint'`
+      ),
+      query(
+        `SELECT paid_by_person_id AS person_id, SUM(amount) AS amount
+         FROM ${prefix}.transactions
+         WHERE paid_by_person_id IS NOT NULL AND ${monthExpression("transaction_date")}
+         GROUP BY paid_by_person_id`,
+        period
+      ),
+      query(
+        `SELECT COALESCE(SUM(bl.projected_amount), 0) AS planned_expenses
+         FROM ${prefix}.budget_periods bp
+         LEFT JOIN ${prefix}.budget_lines bl ON bl.period_id = bp.period_id
+         WHERE bp.month = @month AND bp.year = @year`,
+        period
+      ),
+    ]);
+
+    res.json(calculateContributionSummary({
+      people,
+      incomeConfig,
+      personalExpenses,
+      plannedExpenses: plannedRows[0]?.planned_expenses || 0,
+    }));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to calculate contributions" });
+  }
+});
+
+app.get("/income-config", async (req, res) => {
+  try {
+    const prefix = dbType === "postgres" ? "public" : "dbo";
+    const householdPredicate = dbType === "postgres" ? "is_household = TRUE" : "is_household = 1";
+    const rows = await query(
+      `SELECT p.person_id, p.name, COALESCE(ic.biweekly_amount, 0) AS biweekly_amount
+       FROM ${prefix}.people p
+       LEFT JOIN ${prefix}.income_config ic ON ic.person_id = p.person_id
+       WHERE ${householdPredicate} AND LOWER(p.name) <> 'joint'
+       ORDER BY p.person_id`
+    );
+    res.json(rows.map(row => ({ ...row, biweekly_amount: Number(row.biweekly_amount) })));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to fetch income config" });
+  }
+});
+
+app.put("/income-config/:personId", async (req, res) => {
+  try {
+    const personId = Number(req.params.personId);
+    const amount = Number(req.body.biweekly_amount);
+    if (!Number.isInteger(personId) || !Number.isFinite(amount) || amount < 0) {
+      return res.status(400).json({ error: "Valid person ID and non-negative amount are required" });
+    }
+    const queryText = dbType === "postgres"
+      ? `INSERT INTO public.income_config (person_id, biweekly_amount)
+         VALUES (@person_id, @amount)
+         ON CONFLICT (person_id) DO UPDATE SET biweekly_amount = EXCLUDED.biweekly_amount
+         RETURNING person_id, biweekly_amount`
+      : `MERGE dbo.income_config AS target
+         USING (SELECT @person_id AS person_id, @amount AS biweekly_amount) AS source
+         ON target.person_id = source.person_id
+         WHEN MATCHED THEN UPDATE SET biweekly_amount = source.biweekly_amount
+         WHEN NOT MATCHED THEN INSERT (person_id, biweekly_amount) VALUES (source.person_id, source.biweekly_amount);
+         SELECT person_id, biweekly_amount FROM dbo.income_config WHERE person_id = @person_id`;
+    const rows = await query(queryText, { person_id: personId, amount });
+    res.json({ person_id: personId, biweekly_amount: Number(rows[0].biweekly_amount) });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to save income config" });
+  }
+});
+
 app.get("/summary/monthly", async (req, res) => {
   try {
     const { year } = req.query;
@@ -306,6 +643,112 @@ app.get("/summary/monthly", async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Failed to fetch monthly summary" });
+  }
+});
+
+app.get("/summary/ytd", async (req, res) => {
+  try {
+    const requestedYear = Number(req.query.year);
+    if (!Number.isInteger(requestedYear)) {
+      return res.status(400).json({ error: "A valid year is required" });
+    }
+
+    const today = new Date();
+    const currentYear = today.getFullYear();
+    const monthsElapsed = requestedYear < currentYear
+      ? 12
+      : requestedYear === currentYear
+        ? today.getMonth() + 1
+        : 1;
+    const monthRows = Array.from({ length: monthsElapsed }, (_, index) => `(${index + 1})`).join(", ");
+
+    const categoryQuery = dbType === "postgres"
+      ? `SELECT c.category_id, c.name AS category,
+                COALESCE(SUM(t.amount), 0) AS total,
+                COALESCE(SUM(t.amount), 0) / @months_elapsed AS monthly_average
+         FROM public.categories c
+         LEFT JOIN public.subcategories sc ON sc.category_id = c.category_id
+         LEFT JOIN public.transactions t
+           ON t.subcategory_id = sc.subcategory_id
+          AND EXTRACT(YEAR FROM t.transaction_date) = @year
+          AND EXTRACT(MONTH FROM t.transaction_date) <= @months_elapsed
+         GROUP BY c.category_id, c.name, c.display_order
+         ORDER BY total DESC, c.display_order`
+      : `SELECT c.category_id, c.name AS category,
+                COALESCE(SUM(t.amount), 0) AS total,
+                COALESCE(SUM(t.amount), 0) / @months_elapsed AS monthly_average
+         FROM dbo.categories c
+         LEFT JOIN dbo.subcategories sc ON sc.category_id = c.category_id
+         LEFT JOIN dbo.transactions t
+           ON t.subcategory_id = sc.subcategory_id
+          AND YEAR(t.transaction_date) = @year
+          AND MONTH(t.transaction_date) <= @months_elapsed
+         GROUP BY c.category_id, c.name, c.display_order
+         ORDER BY total DESC, c.display_order`;
+
+    const varianceQuery = dbType === "postgres"
+      ? `WITH months(month) AS (VALUES ${monthRows}),
+           actuals AS (
+             SELECT EXTRACT(MONTH FROM transaction_date) AS month, SUM(amount) AS actual
+             FROM public.transactions
+             WHERE EXTRACT(YEAR FROM transaction_date) = @year
+               AND EXTRACT(MONTH FROM transaction_date) <= @months_elapsed
+             GROUP BY EXTRACT(MONTH FROM transaction_date)
+           ),
+           plans AS (
+             SELECT bp.month, SUM(bl.projected_amount) AS planned
+             FROM public.budget_periods bp
+             JOIN public.budget_lines bl ON bl.period_id = bp.period_id
+             WHERE bp.year = @year AND bp.month <= @months_elapsed
+             GROUP BY bp.month
+           )
+         SELECT m.month,
+                COALESCE(p.planned, 0) AS planned,
+                COALESCE(a.actual, 0) AS actual,
+                COALESCE(p.planned, 0) - COALESCE(a.actual, 0) AS variance
+         FROM months m
+         LEFT JOIN plans p ON p.month = m.month
+         LEFT JOIN actuals a ON a.month = m.month
+         ORDER BY m.month`
+      : `WITH months(month) AS (SELECT month FROM (VALUES ${monthRows}) AS values_table(month)),
+           actuals AS (
+             SELECT MONTH(transaction_date) AS month, SUM(amount) AS actual
+             FROM dbo.transactions
+             WHERE YEAR(transaction_date) = @year
+               AND MONTH(transaction_date) <= @months_elapsed
+             GROUP BY MONTH(transaction_date)
+           ),
+           plans AS (
+             SELECT bp.month, SUM(bl.projected_amount) AS planned
+             FROM dbo.budget_periods bp
+             JOIN dbo.budget_lines bl ON bl.period_id = bp.period_id
+             WHERE bp.year = @year AND bp.month <= @months_elapsed
+             GROUP BY bp.month
+           )
+         SELECT m.month,
+                COALESCE(p.planned, 0) AS planned,
+                COALESCE(a.actual, 0) AS actual,
+                COALESCE(p.planned, 0) - COALESCE(a.actual, 0) AS variance
+         FROM months m
+         LEFT JOIN plans p ON p.month = m.month
+         LEFT JOIN actuals a ON a.month = m.month
+         ORDER BY m.month`;
+
+    const params = { year: requestedYear, months_elapsed: monthsElapsed };
+    const [categoryAverages, monthlyVariance] = await Promise.all([
+      query(categoryQuery, params),
+      query(varianceQuery, params),
+    ]);
+
+    res.json({
+      year: requestedYear,
+      months_elapsed: monthsElapsed,
+      category_averages: categoryAverages,
+      monthly_variance: monthlyVariance,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to fetch YTD summary" });
   }
 });
 
@@ -506,6 +949,71 @@ app.get("/subcategories", async (req, res) => {
   }
 });
 
+app.post("/subcategories", async (req, res) => {
+  try {
+    const { category_id, name } = req.body;
+    if (!Number.isInteger(Number(category_id)) || !name?.trim()) {
+      return res.status(400).json({ error: "category_id and name are required" });
+    }
+
+    const queryText = dbType === "postgres"
+      ? `INSERT INTO public.subcategories (category_id, name, display_order)
+         SELECT @category_id, @name, COALESCE(MAX(display_order), 0) + 1
+         FROM public.subcategories WHERE category_id = @category_id
+         ON CONFLICT (category_id, name) DO NOTHING
+         RETURNING subcategory_id, category_id, name, display_order`
+      : `IF NOT EXISTS (SELECT 1 FROM dbo.subcategories WHERE category_id = @category_id AND name = @name)
+         BEGIN
+           DECLARE @next_order SMALLINT;
+           SELECT @next_order = COALESCE(MAX(display_order), 0) + 1 FROM dbo.subcategories WHERE category_id = @category_id;
+           INSERT INTO dbo.subcategories (category_id, name, display_order) VALUES (@category_id, @name, @next_order);
+           SELECT * FROM dbo.subcategories WHERE subcategory_id = SCOPE_IDENTITY();
+         END`;
+
+    const rows = await query(queryText, { category_id: Number(category_id), name: name.trim() });
+    if (!rows?.length) return res.status(409).json({ error: "A subcategory with that name already exists in this category" });
+    res.status(201).json(rows[0]);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to create subcategory" });
+  }
+});
+
+app.delete("/subcategories/:subcategoryId", async (req, res) => {
+  try {
+    const subcategoryId = Number(req.params.subcategoryId);
+    if (!Number.isInteger(subcategoryId)) {
+      return res.status(400).json({ error: "A valid subcategory ID is required" });
+    }
+
+    const countQuery = dbType === "postgres"
+      ? "SELECT COUNT(*)::int AS cnt FROM public.transactions WHERE subcategory_id = @subcategory_id"
+      : "SELECT COUNT(*) AS cnt FROM dbo.transactions WHERE subcategory_id = @subcategory_id";
+    const countRows = await query(countQuery, { subcategory_id: subcategoryId });
+    const cnt = Number(countRows[0]?.cnt ?? 0);
+    if (cnt > 0) {
+      return res.status(409).json({
+        error: `This line has ${cnt} recorded transaction${cnt === 1 ? "" : "s"} and cannot be removed. Set its budget amount to $0 to exclude it from your plan.`,
+      });
+    }
+
+    const deleteLines = dbType === "postgres"
+      ? "DELETE FROM public.budget_lines WHERE subcategory_id = @subcategory_id"
+      : "DELETE FROM dbo.budget_lines WHERE subcategory_id = @subcategory_id";
+    await query(deleteLines, { subcategory_id: subcategoryId });
+
+    const deleteQuery = dbType === "postgres"
+      ? "DELETE FROM public.subcategories WHERE subcategory_id = @subcategory_id RETURNING subcategory_id"
+      : "DELETE FROM dbo.subcategories OUTPUT DELETED.subcategory_id AS subcategory_id WHERE subcategory_id = @subcategory_id";
+    const rows = await query(deleteQuery, { subcategory_id: subcategoryId });
+    if (!rows?.length) return res.status(404).json({ error: "Subcategory not found" });
+    res.json({ subcategory_id: rows[0].subcategory_id });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to delete subcategory" });
+  }
+});
+
 app.get("/people", async (req, res) => {
   try {
     const queryText = dbType === "postgres"
@@ -689,6 +1197,16 @@ app.post("/imports/xlsx/:importId/commit", async (req, res) => {
   }
 });
 
-app.listen(process.env.PORT || 3000, () => {
-  console.log("Server running");
-});
+async function start() {
+  try {
+    await ensureFeatureSchema();
+    app.listen(process.env.PORT || 3000, () => {
+      console.log("Server running");
+    });
+  } catch (error) {
+    console.error("Failed to initialize the database", error);
+    process.exitCode = 1;
+  }
+}
+
+start();

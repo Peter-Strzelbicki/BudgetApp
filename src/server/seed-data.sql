@@ -4,6 +4,7 @@
 
 -- Clear existing data (in reverse order of foreign key dependencies)
 DELETE FROM transactions;
+DELETE FROM paychecks;
 DELETE FROM goals;
 DELETE FROM budget_lines;
 DELETE FROM income;
@@ -15,7 +16,8 @@ DELETE FROM people;
 -- PEOPLE
 INSERT INTO people (name, is_household) VALUES
 ('Peter', 1),
-('Sailah', 1);
+('Sailah', 1),
+('Joint', 1);
 
 -- CATEGORIES
 INSERT INTO categories (name, display_order) VALUES

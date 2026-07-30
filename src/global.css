@@ -6,15 +6,70 @@
     ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace;
   --font-rounded: 'SF Pro Rounded', 'Hiragino Maru Gothic ProN', Meiryo, 'MS PGothic', sans-serif;
   --font-serif: Georgia, 'Times New Roman', serif;
+  --budget-canvas: #f3f5f0;
+  --budget-surface: #ffffff;
+  --budget-ink: #172019;
+  --budget-muted: #667069;
+  --budget-faint: #8c958f;
+  --budget-line: #dde2dc;
+  --budget-green: #236b53;
+  --budget-green-soft: #e2ede6;
+  --budget-coral: #c85b3f;
+  --budget-coral-soft: #f7e5df;
+  --budget-gold: #d6a63a;
+  --budget-gold-soft: #f8efd7;
+  --budget-blue: #3e6f8e;
+  --budget-blue-soft: #e1ebf0;
+  --budget-success-line: #c6dcca;
+  --budget-danger-line: #edc6b9;
+  --budget-info-line: #c8dce6;
+  --budget-warning-line: #e9d499;
+  --budget-warning-surface: #fffcf4;
+  --budget-warning-ink: #8a6516;
+  --budget-warning-divider: #f0e4c4;
+  --budget-bar: #afc8ba;
+  --budget-bar-future: #e8ece7;
+  --budget-scrim: rgba(23, 32, 25, 0.38);
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  --budget-canvas: #101512;
+  --budget-surface: #19211c;
+  --budget-ink: #edf3ee;
+  --budget-muted: #a8b2aa;
+  --budget-faint: #7f8b82;
+  --budget-line: #303b33;
+  --budget-green: #72c19e;
+  --budget-green-soft: #223b2f;
+  --budget-coral: #f08a72;
+  --budget-coral-soft: #3b2823;
+  --budget-gold: #e0b95a;
+  --budget-gold-soft: #3a321f;
+  --budget-blue: #84b7d2;
+  --budget-blue-soft: #243842;
+  --budget-success-line: #38614d;
+  --budget-danger-line: #704239;
+  --budget-info-line: #3a5968;
+  --budget-warning-line: #65572f;
+  --budget-warning-surface: #282518;
+  --budget-warning-ink: #e0b95a;
+  --budget-warning-divider: #473d25;
+  --budget-bar: #426b58;
+  --budget-bar-future: #273029;
+  --budget-scrim: rgba(0, 0, 0, 0.6);
+  color-scheme: dark;
 }
 
 html,
 body,
 #root {
   min-height: 100%;
-  background: #f3f5f0;
+  background: var(--budget-canvas);
 }
 
 body {
   margin: 0;
+  background: var(--budget-canvas);
+  color: var(--budget-ink);
 }

@@ -1,6 +1,6 @@
-import { ChartNoAxesColumnIncreasing, ReceiptText, UsersRound } from 'lucide-react-native';
+import { ChartNoAxesColumnIncreasing, ReceiptText } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
 import { EmptyState, ErrorNotice, formatCurrency, MonthSwitcher, moveMonth, Page, PageHeading, Panel, SectionHeader, StatCard } from '@/components/budget-ui';
 import { CategorySummary, getCategorySummary, getTransactions, Transaction } from '@/constants/api';
@@ -8,7 +8,6 @@ import { BudgetColors, Fonts } from '@/constants/theme';
 
 export default function InsightsScreen() {
   const now = new Date();
-  const compact = useWindowDimensions().width < 760;
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
   const [categories, setCategories] = useState<CategorySummary[]>([]);
@@ -30,10 +29,9 @@ export default function InsightsScreen() {
   const total = transactions.reduce((sum, transaction) => sum + transaction.amount, 0);
   const maxCategory = Math.max(...categories.map(category => category.total), 1);
   const largest = transactions.reduce<Transaction | null>((current, transaction) => !current || transaction.amount > current.amount ? transaction : current, null);
-  const payerTotals = transactions.reduce<Record<string, number>>((result, transaction) => { const payer = transaction.paid_by || 'Unassigned'; result[payer] = (result[payer] || 0) + transaction.amount; return result; }, {});
 
   return <Page>
-    <PageHeading eyebrow="Patterns" title="Spending insights" description="Compare categories, household payers, and transaction size for a selected month." action={<MonthSwitcher month={month} year={year} onPrevious={() => changeMonth(-1)} onNext={() => changeMonth(1)} />} />
+    <PageHeading eyebrow="Patterns" title="Spending insights" description="Compare category distribution and transaction size for a selected month." action={<MonthSwitcher month={month} year={year} onPrevious={() => changeMonth(-1)} onNext={() => changeMonth(1)} />} />
     {error && <ErrorNotice message={error} onRetry={load} />}
     {loading ? <View style={styles.loader}><ActivityIndicator color={BudgetColors.green} size="large" /></View> : <>
       <View style={styles.stats}>
@@ -41,37 +39,23 @@ export default function InsightsScreen() {
         <StatCard label="Typical transaction" value={formatCurrency(transactions.length ? total / transactions.length : 0)} detail="Average recorded expense" icon={<ReceiptText color={BudgetColors.blue} size={19} />} accent={BudgetColors.blue} />
         <StatCard label="Largest transaction" value={formatCurrency(largest?.amount || 0)} detail={largest?.location || largest?.subcategory || 'No activity'} accent={BudgetColors.coral} />
       </View>
-      <View style={[styles.columns, compact && styles.columnsCompact]}>
-        <Panel style={styles.categoryPanel}>
-          <SectionHeader title="Category distribution" detail="Share of monthly spending" />
-          {categories.every(category => category.total === 0) ? <EmptyState title="No spending to compare" detail="Transactions for this month will appear here." /> : <View style={styles.categoryList}>{categories.filter(category => category.total > 0).map(category => {
-            const share = total ? category.total / total * 100 : 0;
-            return <View key={category.category_id} style={styles.categoryRow}>
-              <View style={styles.rowHeader}><Text style={styles.categoryName}>{category.category}</Text><Text style={styles.categoryValue}>{formatCurrency(category.total)} · {Math.round(share)}%</Text></View>
-              <View style={styles.barTrack}><View style={[styles.barFill, { width: `${category.total / maxCategory * 100}%` }]} /></View>
-            </View>;
-          })}</View>}
-        </Panel>
-        <Panel style={styles.payerPanel}>
-          <SectionHeader title="Paid by" detail="Contribution to recorded expenses" />
-          {Object.keys(payerTotals).length === 0 ? <EmptyState title="No payer activity" detail="Assign a household member when recording expenses." /> : Object.entries(payerTotals).sort((a, b) => b[1] - a[1]).map(([payer, amount], index) => <View key={payer} style={[styles.payerRow, index === 0 && styles.payerFirst]}>
-            <View style={styles.payerIcon}><UsersRound color={BudgetColors.blue} size={16} /></View>
-            <View style={styles.payerCopy}><Text style={styles.payerName}>{payer}</Text><Text style={styles.payerShare}>{total ? Math.round(amount / total * 100) : 0}% of monthly spend</Text></View>
-            <Text style={styles.payerAmount}>{formatCurrency(amount)}</Text>
-          </View>)}
-        </Panel>
-      </View>
+      <Panel>
+        <SectionHeader title="Category distribution" detail="Share of monthly spending" />
+        {categories.every(category => category.total === 0) ? <EmptyState title="No spending to compare" detail="Transactions for this month will appear here." /> : <View style={styles.categoryList}>{categories.filter(category => category.total > 0).map(category => {
+          const share = total ? category.total / total * 100 : 0;
+          return <View key={category.category_id} style={styles.categoryRow}>
+            <View style={styles.rowHeader}><Text style={styles.categoryName}>{category.category}</Text><Text style={styles.categoryValue}>{formatCurrency(category.total)} · {Math.round(share)}%</Text></View>
+            <View style={styles.barTrack}><View style={[styles.barFill, { width: `${category.total / maxCategory * 100}%` }]} /></View>
+          </View>;
+        })}</View>}
+      </Panel>
     </>}
   </Page>;
 }
 
 const styles = StyleSheet.create({
   loader: { minHeight: 360, alignItems: 'center', justifyContent: 'center' }, stats: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-  columns: { flexDirection: 'row', gap: 16, alignItems: 'flex-start' }, columnsCompact: { flexDirection: 'column' }, categoryPanel: { flex: 1.45, width: '100%' }, payerPanel: { flex: 1, width: '100%' },
   categoryList: { gap: 18 }, categoryRow: { gap: 7 }, rowHeader: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
   categoryName: { flex: 1, color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' }, categoryValue: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '700' },
   barTrack: { height: 8, borderRadius: 4, backgroundColor: BudgetColors.canvas, overflow: 'hidden' }, barFill: { height: 8, borderRadius: 4, backgroundColor: BudgetColors.green },
-  payerRow: { minHeight: 66, flexDirection: 'row', alignItems: 'center', gap: 11, borderTopWidth: 1, borderTopColor: BudgetColors.line }, payerFirst: { borderTopWidth: 0 },
-  payerIcon: { width: 34, height: 34, borderRadius: 7, alignItems: 'center', justifyContent: 'center', backgroundColor: BudgetColors.blueSoft }, payerCopy: { flex: 1, gap: 2 },
-  payerName: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' }, payerShare: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 10 }, payerAmount: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' },
 });

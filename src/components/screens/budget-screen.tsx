@@ -1,20 +1,32 @@
-import { Copy, Save } from 'lucide-react-native';
-import { useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import { Copy, Pencil, Plus, Save, Trash2, X } from 'lucide-react-native';
+import { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 
 import { ErrorNotice, formatCurrency, MonthSwitcher, moveMonth, Page, PageHeading, Panel, SectionHeader, StatCard } from '@/components/budget-ui';
-import { BudgetLine, getBudgetLines, saveBudgetLine } from '@/constants/api';
+import { ContributionPanel } from '@/components/contribution-panel';
+import { PaycheckPanel } from '@/components/paycheck-panel';
+import { BudgetLine, Category, ContributionSummary, createSubcategory, deleteSubcategory, getBudgetLines, getCategories, getContributionSummary, saveBudgetLine } from '@/constants/api';
 import { BudgetColors, Fonts } from '@/constants/theme';
 
 export default function BudgetScreen() {
   const now = new Date();
-  const compact = useWindowDimensions().width < 700;
+  const width = useWindowDimensions().width;
+  const compact = width < 700;
+  const contributionCompact = width < 1000;
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
   const [lines, setLines] = useState<BudgetLine[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [contribution, setContribution] = useState<ContributionSummary | null>(null);
   const [drafts, setDrafts] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [managing, setManaging] = useState(false);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [addingTo, setAddingTo] = useState<number | null>(null);
+  const [newLineName, setNewLineName] = useState('');
+  const [addingBusy, setAddingBusy] = useState(false);
+  const newLineRef = useRef<TextInput>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -23,8 +35,14 @@ export default function BudgetScreen() {
     setError(null);
     setNotice(null);
     try {
-      const rows = await getBudgetLines(month, year);
+      const [rows, contributionRows, categoryRows] = await Promise.all([
+        getBudgetLines(month, year),
+        getContributionSummary(month, year),
+        getCategories(),
+      ]);
       setLines(rows);
+      setContribution(contributionRows);
+      setCategories(categoryRows);
       setDrafts(Object.fromEntries(rows.map(line => [line.subcategory_id, String(line.projected_amount)])));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'The budget could not be loaded.');
@@ -41,6 +59,10 @@ export default function BudgetScreen() {
     setYear(next.year);
   };
 
+  const refreshContribution = async () => {
+    setContribution(await getContributionSummary(month, year));
+  };
+
   const saveAll = async () => {
     const changed = lines.filter(line => Number(drafts[line.subcategory_id] || 0) !== line.projected_amount);
     if (changed.length === 0) {
@@ -53,10 +75,68 @@ export default function BudgetScreen() {
       await Promise.all(changed.map(line => saveBudgetLine(line.subcategory_id, month, year, Number(drafts[line.subcategory_id] || 0))));
       setLines(current => current.map(line => ({ ...line, projected_amount: Number(drafts[line.subcategory_id] || 0) })));
       setNotice(`${changed.length} budget line${changed.length === 1 ? '' : 's'} saved.`);
+      try {
+        await refreshContribution();
+      } catch {
+        setError('The budget was saved, but transfer totals could not be refreshed.');
+      }
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'The budget could not be saved.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const toggleManage = () => {
+    setManaging(current => !current);
+    setAddingTo(null);
+    setNewLineName('');
+    setError(null);
+  };
+
+  const startAdd = (categoryId: number) => {
+    setAddingTo(categoryId);
+    setNewLineName('');
+    setTimeout(() => newLineRef.current?.focus(), 80);
+  };
+
+  const confirmAdd = async () => {
+    const name = newLineName.trim();
+    if (!name || addingTo === null) return;
+    setAddingBusy(true);
+    setError(null);
+    try {
+      await createSubcategory(addingTo, name);
+      const [rows, categoryRows] = await Promise.all([getBudgetLines(month, year), getCategories()]);
+      setLines(rows);
+      setCategories(categoryRows);
+      setDrafts(current => ({ ...current, ...Object.fromEntries(rows.filter(row => !(row.subcategory_id in current)).map(row => [row.subcategory_id, '0'])) }));
+      setAddingTo(null);
+      setNewLineName('');
+      setNotice(`"${name}" added.`);
+    } catch (addError) {
+      setError(addError instanceof Error ? addError.message : 'The line could not be added.');
+    } finally {
+      setAddingBusy(false);
+    }
+  };
+
+  const removeLine = async (line: BudgetLine) => {
+    const confirmed = Platform.OS === 'web' && typeof window !== 'undefined'
+      ? window.confirm(`Remove "${line.subcategory}" from the budget? This cannot be undone if the line has no transactions.`)
+      : await new Promise<boolean>(resolve => Alert.alert('Remove line?', `Remove "${line.subcategory}"?`, [{ text: 'Cancel', style: 'cancel', onPress: () => resolve(false) }, { text: 'Remove', style: 'destructive', onPress: () => resolve(true) }], { cancelable: true, onDismiss: () => resolve(false) }));
+    if (!confirmed) return;
+    setDeletingId(line.subcategory_id);
+    setError(null);
+    try {
+      await deleteSubcategory(line.subcategory_id);
+      setLines(current => current.filter(row => row.subcategory_id !== line.subcategory_id));
+      setDrafts(current => { const next = { ...current }; delete next[line.subcategory_id]; return next; });
+      setNotice(`"${line.subcategory}" removed.`);
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'The line could not be removed.');
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -96,41 +176,101 @@ export default function BudgetScreen() {
         <StatCard label="Actual" value={formatCurrency(actual)} detail="From recorded transactions" accent={BudgetColors.blue} />
         <StatCard label={remaining >= 0 ? 'Remaining' : 'Over plan'} value={formatCurrency(Math.abs(remaining))} detail={planned > 0 ? `${Math.round(actual / planned * 100)}% used` : 'Enter a plan below'} accent={remaining >= 0 ? BudgetColors.gold : BudgetColors.coral} />
       </View>
+      <View style={[styles.contributionGrid, contributionCompact && styles.contributionGridCompact]}>
+        <PaycheckPanel month={month} year={year} onChanged={refreshContribution} style={contributionCompact && styles.contributionPanelCompact} />
+        <ContributionPanel summary={contribution} style={[styles.contributionPanel, contributionCompact && styles.contributionPanelCompact]} />
+      </View>
       <View style={styles.toolbar}>
         <Pressable onPress={copyPrevious} style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}>
-          <Copy color={BudgetColors.ink} size={16} /><Text style={styles.secondaryText}>Copy previous month</Text>
+          <Copy color={BudgetColors.ink} size={16} /><Text style={styles.secondaryText}>Copy previous</Text>
         </Pressable>
-        <Pressable disabled={saving} onPress={saveAll} style={({ pressed }) => [styles.primaryButton, saving && styles.disabled, pressed && styles.pressed]}>
+        <Pressable onPress={toggleManage} style={({ pressed }) => [styles.secondaryButton, managing && styles.secondaryButtonActive, pressed && styles.pressed]}>
+          {managing ? <X color={BudgetColors.green} size={16} /> : <Pencil color={BudgetColors.ink} size={16} />}
+          <Text style={[styles.secondaryText, managing && styles.secondaryTextActive]}>{managing ? 'Done' : 'Manage lines'}</Text>
+        </Pressable>
+        <Pressable disabled={saving || managing} onPress={saveAll} style={({ pressed }) => [styles.primaryButton, (saving || managing) && styles.disabled, pressed && styles.pressed]}>
           {saving ? <ActivityIndicator color={BudgetColors.surface} size="small" /> : <Save color={BudgetColors.surface} size={16} />}
           <Text style={styles.primaryText}>{saving ? 'Saving' : 'Save changes'}</Text>
         </Pressable>
       </View>
       {loading ? <View style={styles.loader}><ActivityIndicator color={BudgetColors.green} size="large" /></View> : Object.entries(groups).map(([category, categoryLines]) => {
+        const categoryId = categories.find(c => c.name === category)?.category_id ?? null;
         const categoryPlanned = categoryLines.reduce((sum, line) => sum + Number(drafts[line.subcategory_id] || 0), 0);
         const categoryActual = categoryLines.reduce((sum, line) => sum + line.actual_amount, 0);
+        const isAddingHere = addingTo === categoryId;
         return <Panel key={category}>
-          <SectionHeader title={category} detail={`${formatCurrency(categoryActual)} spent of ${formatCurrency(categoryPlanned)} planned`} />
+          <SectionHeader
+            title={category}
+            detail={managing ? 'Manage lines' : `${formatCurrency(categoryActual)} spent of ${formatCurrency(categoryPlanned)} planned`}
+          />
           {categoryLines.map((line, index) => {
             const linePlan = Number(drafts[line.subcategory_id] || 0);
             const percent = linePlan > 0 ? line.actual_amount / linePlan * 100 : line.actual_amount > 0 ? 100 : 0;
+            const isDeleting = deletingId === line.subcategory_id;
             return <View key={line.subcategory_id} style={[styles.line, compact && styles.lineCompact, index === 0 && styles.lineFirst]}>
+              {managing && (
+                <Pressable
+                  accessibilityLabel={`Remove ${line.subcategory}`}
+                  disabled={isDeleting}
+                  onPress={() => removeLine(line)}
+                  style={({ pressed }) => [styles.deleteBtn, pressed && styles.pressed]}>
+                  {isDeleting
+                    ? <ActivityIndicator color={BudgetColors.coral} size="small" />
+                    : <Trash2 color={BudgetColors.coral} size={17} />}
+                </Pressable>
+              )}
               <View style={styles.lineCopy}>
                 <Text style={styles.lineName}>{line.subcategory}</Text>
-                <Text style={[styles.lineActual, percent > 100 && styles.over]}>{formatCurrency(line.actual_amount, 2)} spent</Text>
-                <View style={styles.progress}><View style={[styles.progressFill, percent > 100 && styles.progressOver, { width: `${Math.min(percent, 100)}%` }]} /></View>
+                {!managing && <Text style={[styles.lineActual, percent > 100 && styles.over]}>{formatCurrency(line.actual_amount, 2)} spent</Text>}
+                {!managing && <View style={styles.progress}><View style={[styles.progressFill, percent > 100 && styles.progressOver, { width: `${Math.min(percent, 100)}%` }]} /></View>}
               </View>
-              <View style={styles.inputWrap}>
-                <Text style={styles.currency}>$</Text>
-                <TextInput
-                  value={drafts[line.subcategory_id] ?? '0'}
-                  onChangeText={value => setDrafts(current => ({ ...current, [line.subcategory_id]: value.replace(/[^0-9.]/g, '') }))}
-                  keyboardType="decimal-pad"
-                  selectTextOnFocus
-                  style={styles.input}
-                />
-              </View>
+              {!managing && (
+                <View style={styles.inputWrap}>
+                  <Text style={styles.currency}>$</Text>
+                  <TextInput
+                    value={drafts[line.subcategory_id] ?? '0'}
+                    onChangeText={value => setDrafts(current => ({ ...current, [line.subcategory_id]: value.replace(/[^0-9.]/g, '') }))}
+                    keyboardType="decimal-pad"
+                    selectTextOnFocus
+                    style={styles.input}
+                  />
+                </View>
+              )}
             </View>;
           })}
+          {managing && categoryId && (
+            isAddingHere ? (
+              <View style={styles.addRow}>
+                <TextInput
+                  ref={newLineRef}
+                  value={newLineName}
+                  onChangeText={setNewLineName}
+                  onSubmitEditing={confirmAdd}
+                  placeholder={`New ${category} line name…`}
+                  placeholderTextColor={BudgetColors.faint}
+                  returnKeyType="done"
+                  style={styles.addInput}
+                />
+                <Pressable
+                  disabled={addingBusy || !newLineName.trim()}
+                  onPress={confirmAdd}
+                  style={({ pressed }) => [styles.addConfirmBtn, (!newLineName.trim() || addingBusy) && styles.disabled, pressed && styles.pressed]}>
+                  {addingBusy
+                    ? <ActivityIndicator color={BudgetColors.surface} size="small" />
+                    : <Plus color={BudgetColors.surface} size={16} />}
+                  <Text style={styles.addConfirmText}>Add</Text>
+                </Pressable>
+                <Pressable onPress={() => { setAddingTo(null); setNewLineName(''); }} style={({ pressed }) => [styles.addCancelBtn, pressed && styles.pressed]}>
+                  <X color={BudgetColors.muted} size={17} />
+                </Pressable>
+              </View>
+            ) : (
+              <Pressable onPress={() => startAdd(categoryId)} style={({ pressed }) => [styles.addLineBtn, pressed && styles.pressed]}>
+                <Plus color={BudgetColors.green} size={16} />
+                <Text style={styles.addLineBtnText}>Add line to {category}</Text>
+              </Pressable>
+            )
+          )}
         </Panel>;
       })}
     </Page>
@@ -139,16 +279,30 @@ export default function BudgetScreen() {
 
 const styles = StyleSheet.create({
   stats: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-  notice: { padding: 12, borderRadius: 7, backgroundColor: BudgetColors.greenSoft, borderWidth: 1, borderColor: '#C7DCCD' },
+  contributionGrid: { flexDirection: 'row', alignItems: 'stretch', gap: 16 },
+  contributionGridCompact: { flexDirection: 'column' },
+  contributionPanel: { flex: 1, minWidth: 0 },
+  contributionPanelCompact: { flexGrow: 0, flexShrink: 0, flexBasis: 'auto' },
+  notice: { padding: 12, borderRadius: 7, backgroundColor: BudgetColors.greenSoft, borderWidth: 1, borderColor: BudgetColors.successLine },
   noticeText: { color: BudgetColors.green, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '700' },
   toolbar: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, flexWrap: 'wrap' },
   secondaryButton: { height: 40, paddingHorizontal: 13, borderRadius: 7, borderWidth: 1, borderColor: BudgetColors.line, backgroundColor: BudgetColors.surface, flexDirection: 'row', alignItems: 'center', gap: 7 },
+  secondaryButtonActive: { borderColor: BudgetColors.green, backgroundColor: BudgetColors.greenSoft },
   secondaryText: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' },
+  secondaryTextActive: { color: BudgetColors.green },
   primaryButton: { height: 40, paddingHorizontal: 14, borderRadius: 7, backgroundColor: BudgetColors.green, flexDirection: 'row', alignItems: 'center', gap: 7 },
   primaryText: { color: BudgetColors.surface, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' },
   disabled: { opacity: 0.55 }, pressed: { opacity: 0.7 }, loader: { minHeight: 300, alignItems: 'center', justifyContent: 'center' },
-  line: { minHeight: 76, flexDirection: 'row', alignItems: 'center', gap: 20, borderTopWidth: 1, borderTopColor: BudgetColors.line },
+  line: { minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: 14, borderTopWidth: 1, borderTopColor: BudgetColors.line },
   lineFirst: { borderTopWidth: 0 }, lineCompact: { minHeight: 92 }, lineCopy: { flex: 1, minWidth: 0, gap: 4 },
+  deleteBtn: { width: 38, height: 38, borderRadius: 7, alignItems: 'center', justifyContent: 'center', backgroundColor: BudgetColors.coralSoft },
+  addLineBtn: { marginTop: 14, height: 38, borderRadius: 7, borderWidth: 1, borderStyle: 'dashed', borderColor: BudgetColors.green, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 },
+  addLineBtnText: { color: BudgetColors.green, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' },
+  addRow: { marginTop: 14, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  addInput: { flex: 1, height: 40, borderRadius: 7, borderWidth: 1, borderColor: BudgetColors.green, backgroundColor: BudgetColors.canvas, color: BudgetColors.ink, paddingHorizontal: 11, fontFamily: Fonts.sans, fontSize: 13 },
+  addConfirmBtn: { height: 40, paddingHorizontal: 12, borderRadius: 7, backgroundColor: BudgetColors.green, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  addConfirmText: { color: BudgetColors.surface, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' },
+  addCancelBtn: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center' },
   lineName: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 13, fontWeight: '800' },
   lineActual: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11 }, over: { color: BudgetColors.coral },
   progress: { width: '100%', maxWidth: 380, height: 4, borderRadius: 2, backgroundColor: BudgetColors.canvas, overflow: 'hidden' },

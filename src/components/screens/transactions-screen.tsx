@@ -1,5 +1,5 @@
 import { useFocusEffect, router } from 'expo-router';
-import { MapPin, Plus, ReceiptText, Search, Trash2, UserRound } from 'lucide-react-native';
+import { MapPin, Pencil, Plus, ReceiptText, Search, Trash2, UserRound } from 'lucide-react-native';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 
@@ -74,7 +74,13 @@ export default function TransactionsScreen() {
           </View>
           {transaction.notes && <Text style={styles.note} numberOfLines={2}>{transaction.notes}</Text>}
         </View>
-        <View style={styles.amountColumn}><Text style={styles.amount}>{formatCurrency(transaction.amount, 2)}</Text><Pressable accessibilityLabel={`Delete ${transaction.location || transaction.subcategory}`} disabled={deletingId === transaction.transaction_id} onPress={() => remove(transaction)} style={({ pressed }) => [styles.deleteButton, pressed && styles.pressed]}>{deletingId === transaction.transaction_id ? <ActivityIndicator color={BudgetColors.coral} size="small" /> : <Trash2 color={BudgetColors.coral} size={16} />}</Pressable></View>
+        <View style={styles.amountColumn}>
+          <Text style={styles.amount}>{formatCurrency(transaction.amount, 2)}</Text>
+          <View style={styles.rowActions}>
+            <Pressable accessibilityLabel={`Edit ${transaction.location || transaction.subcategory}`} onPress={() => router.push({ pathname: '/add-transaction', params: { transactionId: String(transaction.transaction_id) } })} style={({ pressed }) => [styles.editButton, pressed && styles.pressed]}><Pencil color={BudgetColors.blue} size={16} /></Pressable>
+            <Pressable accessibilityLabel={`Delete ${transaction.location || transaction.subcategory}`} disabled={deletingId === transaction.transaction_id} onPress={() => remove(transaction)} style={({ pressed }) => [styles.deleteButton, pressed && styles.pressed]}>{deletingId === transaction.transaction_id ? <ActivityIndicator color={BudgetColors.coral} size="small" /> : <Trash2 color={BudgetColors.coral} size={16} />}</Pressable>
+          </View>
+        </View>
       </View>)}
     </Panel>
   </Page>;
@@ -100,5 +106,8 @@ const styles = StyleSheet.create({
   categoryChip: { backgroundColor: BudgetColors.blueSoft, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 5 }, categoryText: { color: BudgetColors.blue, fontFamily: Fonts.sans, fontSize: 9, fontWeight: '800' },
   meta: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11 }, details: { flexDirection: 'row', gap: 12, flexWrap: 'wrap' }, detail: { flexDirection: 'row', alignItems: 'center', gap: 4 }, detailText: { color: BudgetColors.faint, fontFamily: Fonts.sans, fontSize: 10 },
   note: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11, lineHeight: 16, marginTop: 2 },
-  amountColumn: { alignItems: 'flex-end', gap: 12 }, amount: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 14, fontWeight: '800' }, deleteButton: { width: 34, height: 30, alignItems: 'center', justifyContent: 'center' },
+  amountColumn: { alignItems: 'flex-end', gap: 12 }, amount: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 14, fontWeight: '800' },
+  rowActions: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  editButton: { width: 34, height: 30, alignItems: 'center', justifyContent: 'center' },
+  deleteButton: { width: 34, height: 30, alignItems: 'center', justifyContent: 'center' },
 });

@@ -1,13 +1,17 @@
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { CalendarDays, CheckCircle2, MapPin, NotebookPen, ReceiptText, RotateCcw, UserRound } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 
 import { ErrorNotice, Page, PageHeading, Panel, SectionHeader } from '@/components/budget-ui';
-import { addTransaction, Category, getCategories, getPeople, getSubcategories, Person, Subcategory } from '@/constants/api';
+import { addTransaction, Category, getCategories, getPeople, getSubcategories, getTransaction, Person, Subcategory, updateTransaction } from '@/constants/api';
 import { BudgetColors, Fonts } from '@/constants/theme';
 
 export default function AddTransactionScreen() {
+  const params = useLocalSearchParams<{ transactionId?: string }>();
+  const transactionIdValue = Array.isArray(params.transactionId) ? params.transactionId[0] : params.transactionId;
+  const transactionId = Number(transactionIdValue);
+  const editing = Number.isInteger(transactionId) && transactionId > 0;
   const compact = useWindowDimensions().width < 720;
   const [categories, setCategories] = useState<Category[]>([]);
   const [subcategories, setSubcategories] = useState<Subcategory[]>([]);
@@ -28,12 +32,26 @@ export default function AddTransactionScreen() {
   const loadReferenceData = async () => {
     setLoading(true); setError(null);
     try {
-      const [categoryRows, peopleRows] = await Promise.all([getCategories(), getPeople()]);
+      const [categoryRows, peopleRows, transaction] = await Promise.all([
+        getCategories(),
+        getPeople(),
+        editing ? getTransaction(transactionId) : Promise.resolve(null),
+      ]);
       setCategories(categoryRows); setPeople(peopleRows);
+      if (transaction) {
+        setCategoryId(transaction.category_id);
+        setSubcategoryId(transaction.subcategory_id);
+        setSubcategories(await getSubcategories(transaction.category_id));
+        setPersonId(transaction.paid_by_person_id);
+        setAmount(String(transaction.amount));
+        setDate(transaction.transaction_date.slice(0, 10));
+        setLocation(transaction.location || '');
+        setNotes(transaction.notes || '');
+      }
     } catch (loadError) { setError(loadError instanceof Error ? loadError.message : 'Form options could not be loaded.'); }
     finally { setLoading(false); }
   };
-  useEffect(() => { loadReferenceData(); }, []);
+  useEffect(() => { loadReferenceData(); }, [transactionIdValue]);
 
   const chooseCategory = async (selectedId: number) => {
     setCategoryId(selectedId); setSubcategoryId(null); setSubcategories([]); setLoadingSubs(true); setError(null);
@@ -43,6 +61,11 @@ export default function AddTransactionScreen() {
   };
 
   const reset = () => {
+    if (editing) {
+      loadReferenceData();
+      setSuccess(false);
+      return;
+    }
     setCategoryId(null); setSubcategoryId(null); setSubcategories([]); setPersonId(null); setAmount(''); setLocation(''); setNotes(''); setDate(new Date().toISOString().slice(0, 10)); setError(null); setSuccess(false);
   };
 
@@ -53,17 +76,21 @@ export default function AddTransactionScreen() {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00`))) { setError('Enter a valid date in YYYY-MM-DD format.'); return; }
     setSubmitting(true); setError(null); setSuccess(false);
     try {
-      await addTransaction({ subcategory_id: subcategoryId, transaction_date: date, amount: parsedAmount, location: location.trim() || undefined, paid_by_person_id: personId || undefined, notes: notes.trim() || undefined });
+      const payload = { subcategory_id: subcategoryId, transaction_date: date, amount: parsedAmount, location: location.trim() || undefined, paid_by_person_id: personId || undefined, notes: notes.trim() || undefined };
+      if (editing) await updateTransaction(transactionId, payload);
+      else await addTransaction(payload);
       setSuccess(true);
-      setCategoryId(null); setSubcategoryId(null); setSubcategories([]); setAmount(''); setLocation(''); setNotes('');
+      if (!editing) {
+        setCategoryId(null); setSubcategoryId(null); setSubcategories([]); setAmount(''); setLocation(''); setNotes('');
+      }
     } catch (submitError) { setError(submitError instanceof Error ? submitError.message : 'The transaction could not be saved.'); }
     finally { setSubmitting(false); }
   };
 
   return <Page>
-    <PageHeading eyebrow="New entry" title="Record a transaction" description="Add an expense to the household ledger and monthly totals." />
+    <PageHeading eyebrow={editing ? 'Ledger entry' : 'New entry'} title={editing ? 'Edit transaction' : 'Record a transaction'} description={editing ? 'Update the expense details, classification, or payer.' : 'Add an expense to the household ledger and monthly totals.'} />
     {error && <ErrorNotice message={error} onRetry={loading ? loadReferenceData : undefined} />}
-    {success && <View style={styles.success}><CheckCircle2 color={BudgetColors.green} size={20} /><View style={styles.successCopy}><Text style={styles.successTitle}>Transaction recorded</Text><Text style={styles.successDetail}>The dashboard and monthly ledger now include this expense.</Text></View><Pressable onPress={() => router.replace('/transactions')}><Text style={styles.successLink}>View ledger</Text></Pressable></View>}
+    {success && <View style={styles.success}><CheckCircle2 color={BudgetColors.green} size={20} /><View style={styles.successCopy}><Text style={styles.successTitle}>{editing ? 'Transaction updated' : 'Transaction recorded'}</Text><Text style={styles.successDetail}>The dashboard and monthly ledger now include these details.</Text></View><Pressable onPress={() => router.replace('/transactions')}><Text style={styles.successLink}>View ledger</Text></Pressable></View>}
     {loading ? <View style={styles.loader}><ActivityIndicator color={BudgetColors.green} size="large" /></View> : <>
       <Panel>
         <SectionHeader title="Classification" detail="Choose where this expense belongs" />
@@ -85,8 +112,8 @@ export default function AddTransactionScreen() {
         </Panel>
       </View>
       <View style={styles.actions}>
-        <Pressable disabled={submitting} onPress={reset} style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}><RotateCcw color={BudgetColors.ink} size={16} /><Text style={styles.secondaryText}>Clear</Text></Pressable>
-        <Pressable disabled={submitting} onPress={submit} style={({ pressed }) => [styles.primaryButton, submitting && styles.disabled, pressed && styles.pressed]}>{submitting ? <ActivityIndicator color={BudgetColors.surface} size="small" /> : <ReceiptText color={BudgetColors.surface} size={16} />}<Text style={styles.primaryText}>{submitting ? 'Saving' : 'Save transaction'}</Text></Pressable>
+        <Pressable disabled={submitting} onPress={reset} style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}><RotateCcw color={BudgetColors.ink} size={16} /><Text style={styles.secondaryText}>{editing ? 'Reset' : 'Clear'}</Text></Pressable>
+        <Pressable disabled={submitting} onPress={submit} style={({ pressed }) => [styles.primaryButton, submitting && styles.disabled, pressed && styles.pressed]}>{submitting ? <ActivityIndicator color={BudgetColors.surface} size="small" /> : <ReceiptText color={BudgetColors.surface} size={16} />}<Text style={styles.primaryText}>{submitting ? 'Saving' : editing ? 'Save changes' : 'Save transaction'}</Text></Pressable>
       </View>
     </>}
   </Page>;
@@ -102,7 +129,7 @@ function Field({ icon, label, required, children }: { icon: React.ReactNode; lab
 
 const styles = StyleSheet.create({
   loader: { minHeight: 360, alignItems: 'center', justifyContent: 'center' },
-  success: { minHeight: 70, padding: 15, borderRadius: 8, borderWidth: 1, borderColor: '#C6DCCA', backgroundColor: BudgetColors.greenSoft, flexDirection: 'row', alignItems: 'center', gap: 12 }, successCopy: { flex: 1, gap: 2 }, successTitle: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 13, fontWeight: '800' }, successDetail: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11 }, successLink: { color: BudgetColors.green, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' },
+  success: { minHeight: 70, padding: 15, borderRadius: 8, borderWidth: 1, borderColor: BudgetColors.successLine, backgroundColor: BudgetColors.greenSoft, flexDirection: 'row', alignItems: 'center', gap: 12 }, successCopy: { flex: 1, gap: 2 }, successTitle: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 13, fontWeight: '800' }, successDetail: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11 }, successLink: { color: BudgetColors.green, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' },
   fieldLabel: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '800', marginBottom: 8 }, choices: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
   choice: { minHeight: 36, paddingHorizontal: 11, borderRadius: 7, borderWidth: 1, borderColor: BudgetColors.line, backgroundColor: BudgetColors.canvas, alignItems: 'center', justifyContent: 'center' }, choiceSelected: { borderColor: BudgetColors.green, backgroundColor: BudgetColors.greenSoft }, choiceText: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '700' }, choiceTextSelected: { color: BudgetColors.green },
   subcategoryBlock: { marginTop: 22 }, columns: { flexDirection: 'row', alignItems: 'flex-start', gap: 16 }, columnsCompact: { flexDirection: 'column' }, column: { flex: 1, width: '100%', gap: 18 },

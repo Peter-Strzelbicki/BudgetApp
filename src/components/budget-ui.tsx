@@ -135,6 +135,34 @@ export function MonthSwitcher({ month, year, onPrevious, onNext }: {
   );
 }
 
+export function YearSwitcher({ year, onPrevious, onNext, previousDisabled = false, nextDisabled = false }: {
+  year: number;
+  onPrevious: () => void;
+  onNext: () => void;
+  previousDisabled?: boolean;
+  nextDisabled?: boolean;
+}) {
+  return (
+    <View style={styles.yearSwitcher}>
+      <Pressable
+        accessibilityLabel="Previous year"
+        disabled={previousDisabled}
+        onPress={onPrevious}
+        style={({ pressed }) => [styles.yearButton, previousDisabled && styles.disabled, pressed && styles.pressed]}>
+        <ChevronLeft color={BudgetColors.ink} size={19} />
+      </Pressable>
+      <Text style={styles.yearLabel}>{year}</Text>
+      <Pressable
+        accessibilityLabel="Next year"
+        disabled={nextDisabled}
+        onPress={onNext}
+        style={({ pressed }) => [styles.yearButton, nextDisabled && styles.disabled, pressed && styles.pressed]}>
+        <ChevronRight color={BudgetColors.ink} size={19} />
+      </Pressable>
+    </View>
+  );
+}
+
 export function moveMonth(month: number, year: number, offset: number) {
   const date = new Date(year, month - 1 + offset, 1);
   return { month: date.getMonth() + 1, year: date.getFullYear() };
@@ -157,7 +185,7 @@ const styles = StyleSheet.create({
   },
   pageContentCompact: { paddingHorizontal: 14, paddingTop: 24, paddingBottom: 40, gap: 18 },
   headingRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: 20, flexWrap: 'wrap' },
-  headingCopy: { maxWidth: 680, gap: 6 },
+  headingCopy: { width: '100%', maxWidth: 680, minWidth: 0, flexShrink: 1, gap: 6 },
   eyebrow: { color: BudgetColors.green, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0 },
   heading: { color: BudgetColors.ink, fontFamily: Fonts.serif, fontSize: 34, lineHeight: 40, fontWeight: '700' },
   description: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 14, lineHeight: 21 },
@@ -172,7 +200,7 @@ const styles = StyleSheet.create({
   statLabel: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '700', marginTop: 12 },
   statValue: { color: BudgetColors.ink, fontFamily: Fonts.serif, fontSize: 25, fontWeight: '700', marginTop: 4 },
   statDetail: { color: BudgetColors.faint, fontFamily: Fonts.sans, fontSize: 11, marginTop: 5 },
-  errorNotice: { flexDirection: 'row', alignItems: 'center', gap: 16, padding: 16, borderRadius: 8, borderWidth: 1, borderColor: '#EDC6B9', backgroundColor: BudgetColors.coralSoft },
+  errorNotice: { flexDirection: 'row', alignItems: 'center', gap: 16, padding: 16, borderRadius: 8, borderWidth: 1, borderColor: BudgetColors.dangerLine, backgroundColor: BudgetColors.coralSoft },
   errorCopy: { flex: 1, gap: 2 },
   errorTitle: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 13, fontWeight: '800' },
   errorMessage: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 12 },
@@ -184,5 +212,9 @@ const styles = StyleSheet.create({
   monthSwitcher: { height: 42, minWidth: 250, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderWidth: 1, borderColor: BudgetColors.line, borderRadius: 8, backgroundColor: BudgetColors.surface },
   monthButton: { width: 42, height: 40, alignItems: 'center', justifyContent: 'center' },
   monthLabel: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 13, fontWeight: '800' },
+  yearSwitcher: { height: 42, minWidth: 150, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderWidth: 1, borderColor: BudgetColors.line, borderRadius: 8, backgroundColor: BudgetColors.surface },
+  yearButton: { width: 42, height: 40, alignItems: 'center', justifyContent: 'center' },
+  yearLabel: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 13, fontWeight: '800' },
+  disabled: { opacity: 0.3 },
   pressed: { opacity: 0.65 },
 });
