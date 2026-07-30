@@ -3,8 +3,8 @@ import { MapPin, Pencil, Plus, ReceiptText, Repeat, Search, Trash2, UserRound } 
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 
-import { EmptyState, ErrorNotice, formatCurrency, MonthSwitcher, moveMonth, Page, PageHeading, Panel, SectionHeader, StatCard } from '@/components/budget-ui';
-import { applyRecurringTransactions, deleteTransaction, getPendingRecurring, getTransactions, Transaction } from '@/constants/api';
+import { EmptyState, ErrorNotice, formatCurrency, MonthSwitcher, moveMonth, Page, PageHeading, Panel, SectionHeader } from '@/components/budget-ui';
+import { applyRecurringTransactions, ContributionSummary, deleteTransaction, getContributionSummary, getPendingRecurring, getTransactions, Transaction } from '@/constants/api';
 import { BudgetColors, Fonts } from '@/constants/theme';
 
 export default function TransactionsScreen() {
@@ -19,16 +19,19 @@ export default function TransactionsScreen() {
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [pendingRecurring, setPendingRecurring] = useState(0);
   const [applying, setApplying] = useState(false);
+  const [contribution, setContribution] = useState<ContributionSummary | null>(null);
 
   const load = async () => {
     setLoading(true); setError(null);
     try {
-      const [txRows, pending] = await Promise.all([
+      const [txRows, pending, contributionRows] = await Promise.all([
         getTransactions(month, year),
         getPendingRecurring(month, year),
+        getContributionSummary(month, year),
       ]);
       setTransactions(txRows);
       setPendingRecurring(pending.pending);
+      setContribution(contributionRows);
     }
     catch (loadError) { setError(loadError instanceof Error ? loadError.message : 'Transactions could not be loaded.'); }
     finally { setLoading(false); }
@@ -69,7 +72,9 @@ export default function TransactionsScreen() {
   const normalizedQuery = query.trim().toLowerCase();
   const filtered = transactions.filter(transaction => !normalizedQuery || [transaction.location, transaction.category, transaction.subcategory, transaction.paid_by, transaction.notes].some(value => value?.toLowerCase().includes(normalizedQuery)));
   const total = transactions.reduce((sum, transaction) => sum + transaction.amount, 0);
-  const largest = transactions.reduce((maximum, transaction) => Math.max(maximum, transaction.amount), 0);
+  const monthlyIncome = contribution?.household_income ?? 0;
+  const incomeRemaining = monthlyIncome - total;
+  const spendPct = monthlyIncome > 0 ? Math.min(total / monthlyIncome * 100, 100) : 0;
 
   return <Page>
     <PageHeading eyebrow="Ledger" title="Transactions" description="Search, review, and maintain the household spending record." action={<Pressable onPress={() => router.push('/add-transaction')} style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}><Plus color={BudgetColors.surface} size={17} /><Text style={styles.primaryText}>Add transaction</Text></Pressable>} />
@@ -87,11 +92,25 @@ export default function TransactionsScreen() {
       <MonthSwitcher month={month} year={year} onPrevious={() => changeMonth(-1)} onNext={() => changeMonth(1)} />
       <View style={styles.searchWrap}><Search color={BudgetColors.muted} size={17} /><TextInput value={query} onChangeText={setQuery} placeholder="Search transactions" placeholderTextColor={BudgetColors.faint} style={styles.searchInput} /></View>
     </View>
-    <View style={styles.stats}>
-      <StatCard label="Total spending" value={formatCurrency(total)} detail={`${transactions.length} transaction${transactions.length === 1 ? '' : 's'}`} />
-      <StatCard label="Average transaction" value={formatCurrency(transactions.length ? total / transactions.length : 0)} detail="Across this month" accent={BudgetColors.blue} />
-      <StatCard label="Largest expense" value={formatCurrency(largest)} detail="Single recorded transaction" accent={BudgetColors.gold} />
-    </View>
+    {monthlyIncome > 0 && (
+      <View style={styles.incomeBarPanel}>
+        <View style={styles.incomeBarHeader}>
+          <Text style={styles.incomeBarTitle}>Monthly income</Text>
+          <Text style={styles.incomeBarTotal}>{formatCurrency(monthlyIncome, 2)}</Text>
+        </View>
+        <View style={styles.incomeTrack}>
+          <View style={[styles.incomeFill, { width: `${spendPct}%` }, total > monthlyIncome && styles.incomeFillOver]} />
+        </View>
+        <View style={styles.incomeBarFooter}>
+          <Text style={styles.incomeSpent}>{formatCurrency(total, 2)} spent</Text>
+          <Text style={[styles.incomeLeft, incomeRemaining < 0 && styles.incomeOver]}>
+            {incomeRemaining >= 0
+              ? `${formatCurrency(incomeRemaining, 2)} remaining`
+              : `${formatCurrency(Math.abs(incomeRemaining), 2)} over income`}
+          </Text>
+        </View>
+      </View>
+    )}
     <Panel>
       <SectionHeader title="Monthly ledger" detail={query ? `${filtered.length} matching result${filtered.length === 1 ? '' : 's'}` : 'Newest transactions first'} />
       {loading ? <View style={styles.loader}><ActivityIndicator color={BudgetColors.green} size="large" /></View> : filtered.length === 0 ? <EmptyState title={query ? 'Nothing matches' : 'No transactions yet'} detail={query ? 'Try a category, person, or location.' : 'Record the first expense for this month.'} /> : filtered.map((transaction, index) => <View key={transaction.transaction_id} style={[styles.row, compact && styles.rowCompact, index === 0 && styles.rowFirst]}>
@@ -131,7 +150,18 @@ const styles = StyleSheet.create({
   controls: { flexDirection: 'row', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' },
   searchWrap: { height: 42, minWidth: 240, flex: 1, maxWidth: 390, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: BudgetColors.line, borderRadius: 8, backgroundColor: BudgetColors.surface },
   searchInput: { flex: 1, height: 40, color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 13 },
-  stats: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 }, loader: { minHeight: 280, alignItems: 'center', justifyContent: 'center' },
+  incomeBarPanel: { padding: 20, borderRadius: 8, backgroundColor: BudgetColors.surface, borderWidth: 1, borderColor: BudgetColors.line },
+  incomeBarHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
+  incomeBarTitle: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '800' },
+  incomeBarTotal: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '800' },
+  incomeTrack: { height: 16, borderRadius: 8, backgroundColor: BudgetColors.canvas, overflow: 'hidden', marginBottom: 10 },
+  incomeFill: { height: 16, borderRadius: 8, backgroundColor: BudgetColors.green },
+  incomeFillOver: { backgroundColor: BudgetColors.coral },
+  incomeBarFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  incomeSpent: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '700' },
+  incomeLeft: { color: BudgetColors.green, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '800' },
+  incomeOver: { color: BudgetColors.coral },
+  loader: { minHeight: 280, alignItems: 'center', justifyContent: 'center' },
   row: { minHeight: 104, flexDirection: 'row', alignItems: 'flex-start', gap: 12, paddingVertical: 16, borderTopWidth: 1, borderTopColor: BudgetColors.line }, rowFirst: { borderTopWidth: 0 }, rowCompact: { minHeight: 120 },
   glyph: { width: 38, height: 38, borderRadius: 7, backgroundColor: BudgetColors.greenSoft, alignItems: 'center', justifyContent: 'center' },
   main: { flex: 1, minWidth: 0, gap: 4 }, titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },

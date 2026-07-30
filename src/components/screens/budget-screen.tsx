@@ -4,6 +4,7 @@ import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, TextIn
 
 import { ErrorNotice, formatCurrency, MonthSwitcher, moveMonth, Page, PageHeading, Panel, SectionHeader, StatCard } from '@/components/budget-ui';
 import { ContributionPanel } from '@/components/contribution-panel';
+import { PaycheckPanel } from '@/components/paycheck-panel';
 import { BudgetLine, Category, ContributionSummary, createSubcategory, deleteSubcategory, getBudgetLines, getCategories, getContributionSummary, saveBudgetLine } from '@/constants/api';
 import { BudgetColors, Fonts } from '@/constants/theme';
 
@@ -179,6 +180,7 @@ export default function BudgetScreen() {
         <IncomePanel contribution={contribution} compact={contributionCompact} />
         <ContributionPanel summary={contribution} style={[styles.contributionPanel, contributionCompact && styles.contributionPanelCompact]} />
       </View>
+      <PaycheckPanel month={month} year={year} onChanged={refreshContribution} />
       <View style={styles.toolbar}>
         <Pressable onPress={copyPrevious} style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}>
           <Copy color={BudgetColors.ink} size={16} /><Text style={styles.secondaryText}>Copy previous</Text>

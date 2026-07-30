@@ -66,6 +66,7 @@ export interface Paycheck {
   person_name: string;
   paycheck_date: string;
   amount: number;
+  transferred_amount: number;
 }
 
 export interface ContributionPerson {
@@ -76,9 +77,25 @@ export interface ContributionPerson {
   income: number;
   income_percentage: number;
   monthly_share: number;
+  accrued_share: number;
   paid_personally: number;
+  transferred_to_joint: number;
+  remaining_due: number;
+  monthly_remaining: number;
+  installments_due: number;
+  remaining_pay_periods: number;
+  scheduled_pay_dates: string[];
+  next_pay_date: string | null;
   transfer_due: number;
   credit: number;
+}
+
+export interface JointPayment {
+  joint_payment_id: number;
+  person_id: number;
+  person_name: string;
+  payment_date: string;
+  amount: number;
 }
 
 export interface ExtraIncome {
@@ -95,6 +112,7 @@ export interface ContributionSummary {
   household_income: number;
   planned_expenses: number;
   pay_periods: number;
+  as_of_date: string;
   people: ContributionPerson[];
 }
 
@@ -102,6 +120,7 @@ export interface IncomeConfig {
   person_id: number;
   name: string;
   biweekly_amount: number;
+  payday_anchor: string | null;
 }
 
 export interface Category {
@@ -376,7 +395,7 @@ export function getPeople() {
 }
 
 export async function getPaychecks(month: number, year: number): Promise<Paycheck[]> {
-  const rows = await requestJson<(Omit<Paycheck, 'amount'> & { amount: number | string })[]>(
+  const rows = await requestJson<(Omit<Paycheck, 'amount' | 'transferred_amount'> & { amount: number | string; transferred_amount: number | string })[]>(
     `/paychecks?month=${month}&year=${year}`,
   );
   return rows.map(row => ({
@@ -384,10 +403,11 @@ export async function getPaychecks(month: number, year: number): Promise<Paychec
     paycheck_id: Number(row.paycheck_id),
     person_id: Number(row.person_id),
     amount: Number(row.amount),
+    transferred_amount: Number(row.transferred_amount),
   }));
 }
 
-export function addPaycheck(paycheck: { person_id: number; paycheck_date: string; amount: number }) {
+export function addPaycheck(paycheck: { person_id: number; paycheck_date: string; amount: number; transferred_amount?: number }) {
   return requestJson<{ paycheck_id: number }>('/paychecks', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -395,8 +415,42 @@ export function addPaycheck(paycheck: { person_id: number; paycheck_date: string
   });
 }
 
+export function updatePaycheckTransfer(paycheckId: number, transferredAmount: number) {
+  return requestJson<{ paycheck_id: number }>(`/paychecks/${paycheckId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ transferred_amount: transferredAmount }),
+  });
+}
+
 export function deletePaycheck(paycheckId: number) {
   return requestJson<{ paycheck_id: number }>(`/paychecks/${paycheckId}`, { method: 'DELETE' });
+}
+
+export async function getJointPayments(month: number, year: number): Promise<JointPayment[]> {
+  const rows = await requestJson<(Omit<JointPayment, 'joint_payment_id' | 'person_id' | 'amount'> & {
+    joint_payment_id: number | string;
+    person_id: number | string;
+    amount: number | string;
+  })[]>(`/joint-payments?month=${month}&year=${year}`);
+  return rows.map(row => ({
+    ...row,
+    joint_payment_id: Number(row.joint_payment_id),
+    person_id: Number(row.person_id),
+    amount: Number(row.amount),
+  }));
+}
+
+export function addJointPayment(payment: { person_id: number; payment_date: string; amount: number }) {
+  return requestJson<{ joint_payment_id: number }>('/joint-payments', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payment),
+  }, 1);
+}
+
+export function deleteJointPayment(jointPaymentId: number) {
+  return requestJson<{ joint_payment_id: number }>(`/joint-payments/${jointPaymentId}`, { method: 'DELETE' }, 1);
 }
 
 export async function getContributionSummary(month: number, year: number): Promise<ContributionSummary> {
@@ -404,12 +458,19 @@ export async function getContributionSummary(month: number, year: number): Promi
     household_income: number | string;
     planned_expenses: number | string;
     pay_periods: number | string;
-    people: (Omit<ContributionPerson, 'biweekly_amount' | 'income' | 'income_percentage' | 'monthly_share' | 'paid_personally' | 'transfer_due' | 'credit'> & {
+    as_of_date: string;
+    people: (Omit<ContributionPerson, 'biweekly_amount' | 'income' | 'income_percentage' | 'monthly_share' | 'accrued_share' | 'paid_personally' | 'transferred_to_joint' | 'remaining_due' | 'monthly_remaining' | 'installments_due' | 'remaining_pay_periods' | 'transfer_due' | 'credit'> & {
       biweekly_amount: number | string;
       income: number | string;
       income_percentage: number | string;
       monthly_share: number | string;
+      accrued_share: number | string;
       paid_personally: number | string;
+      transferred_to_joint: number | string;
+      remaining_due: number | string;
+      monthly_remaining: number | string;
+      installments_due: number | string;
+      remaining_pay_periods: number | string;
       transfer_due: number | string;
       credit: number | string;
     })[];
@@ -419,6 +480,7 @@ export async function getContributionSummary(month: number, year: number): Promi
     household_income: Number(result.household_income),
     planned_expenses: Number(result.planned_expenses),
     pay_periods: Number(result.pay_periods),
+    as_of_date: result.as_of_date,
     people: result.people.map(person => ({
       ...person,
       person_id: Number(person.person_id),
@@ -427,7 +489,13 @@ export async function getContributionSummary(month: number, year: number): Promi
       income: Number(person.income),
       income_percentage: Number(person.income_percentage),
       monthly_share: Number(person.monthly_share),
+      accrued_share: Number((person as { accrued_share?: number | string }).accrued_share ?? 0),
       paid_personally: Number(person.paid_personally),
+      transferred_to_joint: Number((person as { transferred_to_joint?: number | string }).transferred_to_joint ?? 0),
+      remaining_due: Number((person as { remaining_due?: number | string }).remaining_due ?? 0),
+      monthly_remaining: Number((person as { monthly_remaining?: number | string }).monthly_remaining ?? 0),
+      installments_due: Number((person as { installments_due?: number | string }).installments_due ?? 0),
+      remaining_pay_periods: Number((person as { remaining_pay_periods?: number | string }).remaining_pay_periods ?? 0),
       transfer_due: Number(person.transfer_due),
       credit: Number(person.credit),
     })),
@@ -438,11 +506,11 @@ export function getIncomeConfig() {
   return requestJson<IncomeConfig[]>('/income-config');
 }
 
-export function saveIncomeConfig(personId: number, biweeklyAmount: number) {
+export function saveIncomeConfig(personId: number, biweeklyAmount: number, paydayAnchor?: string | null) {
   return requestJson<{ person_id: number; biweekly_amount: number }>(`/income-config/${personId}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ biweekly_amount: biweeklyAmount }),
+    body: JSON.stringify({ biweekly_amount: biweeklyAmount, payday_anchor: paydayAnchor }),
   }, 1);
 }
 

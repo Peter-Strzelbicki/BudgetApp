@@ -151,6 +151,17 @@ function isIsoDate(value) {
   return !Number.isNaN(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === value;
 }
 
+function currentIsoDate() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}
+
+function serializeDate(value) {
+  if (!value) return null;
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  return String(value).slice(0, 10);
+}
+
 function readMonthYear(req, res) {
   const month = Number(req.query.month);
   const year = Number(req.query.year);
@@ -171,6 +182,9 @@ async function ensureFeatureSchema() {
         amount NUMERIC(10, 2) NOT NULL CHECK (amount > 0)
       )`);
     await query(`
+      ALTER TABLE public.paychecks
+      ADD COLUMN IF NOT EXISTS transferred_amount NUMERIC(10, 2) NOT NULL DEFAULT 0`);
+    await query(`
       CREATE INDEX IF NOT EXISTS ix_paychecks_person_date
       ON public.paychecks (person_id, paycheck_date)`);
     await query(`
@@ -178,6 +192,29 @@ async function ensureFeatureSchema() {
         person_id INTEGER PRIMARY KEY REFERENCES public.people(person_id) ON DELETE CASCADE,
         biweekly_amount NUMERIC(10, 2) NOT NULL DEFAULT 0
       )`);
+    await query(`
+      ALTER TABLE public.income_config
+      ADD COLUMN IF NOT EXISTS payday_anchor DATE`);
+    await query(`
+      UPDATE public.income_config AS ic
+      SET payday_anchor = CASE LOWER(p.name)
+        WHEN 'peter' THEN DATE '2026-07-10'
+        WHEN 'sailah' THEN DATE '2026-07-17'
+      END
+      FROM public.people AS p
+      WHERE p.person_id = ic.person_id
+        AND ic.payday_anchor IS NULL
+        AND LOWER(p.name) IN ('peter', 'sailah')`);
+    await query(`
+      CREATE TABLE IF NOT EXISTS public.joint_payments (
+        joint_payment_id BIGSERIAL PRIMARY KEY,
+        person_id INTEGER NOT NULL REFERENCES public.people(person_id) ON DELETE CASCADE,
+        payment_date DATE NOT NULL,
+        amount NUMERIC(10, 2) NOT NULL CHECK (amount > 0)
+      )`);
+    await query(`
+      CREATE INDEX IF NOT EXISTS ix_joint_payments_person_date
+      ON public.joint_payments (person_id, payment_date)`);
     await query(`
       CREATE TABLE IF NOT EXISTS public.extra_income (
         extra_income_id BIGSERIAL PRIMARY KEY,
@@ -223,6 +260,9 @@ async function ensureFeatureSchema() {
       );
     END`);
   await query(`
+    IF COL_LENGTH('dbo.paychecks', 'transferred_amount') IS NULL
+      ALTER TABLE dbo.paychecks ADD transferred_amount DECIMAL(10,2) NOT NULL CONSTRAINT DF_paychecks_transferred_amount DEFAULT (0)`);
+  await query(`
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_paychecks_person_date' AND object_id = OBJECT_ID(N'dbo.paychecks'))
       CREATE INDEX IX_paychecks_person_date ON dbo.paychecks(person_id, paycheck_date)`);
   await query(`
@@ -235,6 +275,33 @@ async function ensureFeatureSchema() {
           REFERENCES dbo.people(person_id) ON DELETE CASCADE
       );
     END`);
+  await query(`
+    IF COL_LENGTH('dbo.income_config', 'payday_anchor') IS NULL
+      ALTER TABLE dbo.income_config ADD payday_anchor DATE NULL`);
+  await query(`
+    UPDATE ic
+    SET payday_anchor = CASE LOWER(p.name)
+      WHEN 'peter' THEN CONVERT(DATE, '2026-07-10')
+      WHEN 'sailah' THEN CONVERT(DATE, '2026-07-17')
+    END
+    FROM dbo.income_config ic
+    JOIN dbo.people p ON p.person_id = ic.person_id
+    WHERE ic.payday_anchor IS NULL AND LOWER(p.name) IN ('peter', 'sailah')`);
+  await query(`
+    IF OBJECT_ID(N'dbo.joint_payments', N'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.joint_payments (
+        joint_payment_id INT IDENTITY(1,1) PRIMARY KEY,
+        person_id INT NOT NULL,
+        payment_date DATE NOT NULL,
+        amount DECIMAL(10,2) NOT NULL CHECK (amount > 0),
+        CONSTRAINT FK_joint_payments_people FOREIGN KEY (person_id)
+          REFERENCES dbo.people(person_id) ON DELETE CASCADE
+      );
+    END`);
+  await query(`
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_joint_payments_person_date' AND object_id = OBJECT_ID(N'dbo.joint_payments'))
+      CREATE INDEX IX_joint_payments_person_date ON dbo.joint_payments(person_id, payment_date)`);
   await query(`
     IF OBJECT_ID(N'dbo.extra_income', N'U') IS NULL
     BEGIN
@@ -526,13 +593,13 @@ app.get("/paychecks", async (req, res) => {
     const period = readMonthYear(req, res);
     if (!period) return;
     const queryText = dbType === "postgres"
-      ? `SELECT pc.paycheck_id, pc.person_id, p.name AS person_name, pc.paycheck_date, pc.amount
+      ? `SELECT pc.paycheck_id, pc.person_id, p.name AS person_name, pc.paycheck_date, pc.amount, pc.transferred_amount
          FROM public.paychecks pc
          JOIN public.people p ON p.person_id = pc.person_id
          WHERE EXTRACT(MONTH FROM pc.paycheck_date) = @month
            AND EXTRACT(YEAR FROM pc.paycheck_date) = @year
          ORDER BY pc.paycheck_date DESC, pc.paycheck_id DESC`
-      : `SELECT pc.paycheck_id, pc.person_id, p.name AS person_name, pc.paycheck_date, pc.amount
+      : `SELECT pc.paycheck_id, pc.person_id, p.name AS person_name, pc.paycheck_date, pc.amount, pc.transferred_amount
          FROM dbo.paychecks pc
          JOIN dbo.people p ON p.person_id = pc.person_id
          WHERE MONTH(pc.paycheck_date) = @month AND YEAR(pc.paycheck_date) = @year
@@ -548,8 +615,9 @@ app.post("/paychecks", async (req, res) => {
   try {
     const personId = Number(req.body.person_id);
     const amount = Number(req.body.amount);
+    const transferredAmount = req.body.transferred_amount === undefined ? 0 : Number(req.body.transferred_amount);
     const paycheckDate = req.body.paycheck_date;
-    if (!Number.isInteger(personId) || !isIsoDate(paycheckDate) || !Number.isFinite(amount) || amount <= 0) {
+    if (!Number.isInteger(personId) || !isIsoDate(paycheckDate) || !Number.isFinite(amount) || amount <= 0 || !Number.isFinite(transferredAmount) || transferredAmount < 0) {
       return res.status(400).json({ error: "Valid person, paycheck date, and amount are required" });
     }
 
@@ -565,17 +633,42 @@ app.post("/paychecks", async (req, res) => {
     }
 
     const queryText = dbType === "postgres"
-      ? `INSERT INTO public.paychecks (person_id, paycheck_date, amount)
-         VALUES (@person_id, @paycheck_date, @amount)
+      ? `INSERT INTO public.paychecks (person_id, paycheck_date, amount, transferred_amount)
+         VALUES (@person_id, @paycheck_date, @amount, @transferred_amount)
          RETURNING paycheck_id`
-      : `INSERT INTO dbo.paychecks (person_id, paycheck_date, amount)
+      : `INSERT INTO dbo.paychecks (person_id, paycheck_date, amount, transferred_amount)
          OUTPUT INSERTED.paycheck_id AS paycheck_id
-         VALUES (@person_id, @paycheck_date, @amount)`;
-    const rows = await query(queryText, { person_id: personId, paycheck_date: paycheckDate, amount });
+         VALUES (@person_id, @paycheck_date, @amount, @transferred_amount)`;
+    const rows = await query(queryText, { person_id: personId, paycheck_date: paycheckDate, amount, transferred_amount: transferredAmount });
     res.status(201).json({ paycheck_id: rows[0].paycheck_id });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Failed to add paycheck" });
+  }
+});
+
+app.put("/paychecks/:paycheckId", async (req, res) => {
+  try {
+    const paycheckId = Number(req.params.paycheckId);
+    const transferredAmount = Number(req.body.transferred_amount);
+    if (!Number.isInteger(paycheckId) || !Number.isFinite(transferredAmount) || transferredAmount < 0) {
+      return res.status(400).json({ error: "Valid paycheck and transferred amount are required" });
+    }
+    const queryText = dbType === "postgres"
+      ? `UPDATE public.paychecks
+         SET transferred_amount = @transferred_amount
+         WHERE paycheck_id = @paycheck_id
+         RETURNING paycheck_id`
+      : `UPDATE dbo.paychecks
+         SET transferred_amount = @transferred_amount
+         OUTPUT INSERTED.paycheck_id AS paycheck_id
+         WHERE paycheck_id = @paycheck_id`;
+    const rows = await query(queryText, { paycheck_id: paycheckId, transferred_amount: transferredAmount });
+    if (rows.length === 0) return res.status(404).json({ error: "Paycheck not found" });
+    res.json({ paycheck_id: rows[0].paycheck_id });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to update paycheck" });
   }
 });
 
@@ -597,6 +690,87 @@ app.delete("/paychecks/:paycheckId", async (req, res) => {
   }
 });
 
+app.get("/joint-payments", async (req, res) => {
+  try {
+    const period = readMonthYear(req, res);
+    if (!period) return;
+    const queryText = dbType === "postgres"
+      ? `SELECT jp.joint_payment_id, jp.person_id, p.name AS person_name, jp.payment_date, jp.amount
+         FROM public.joint_payments jp
+         JOIN public.people p ON p.person_id = jp.person_id
+         WHERE EXTRACT(MONTH FROM jp.payment_date) = @month
+           AND EXTRACT(YEAR FROM jp.payment_date) = @year
+         ORDER BY jp.payment_date DESC, jp.joint_payment_id DESC`
+      : `SELECT jp.joint_payment_id, jp.person_id, p.name AS person_name, jp.payment_date, jp.amount
+         FROM dbo.joint_payments jp
+         JOIN dbo.people p ON p.person_id = jp.person_id
+         WHERE MONTH(jp.payment_date) = @month AND YEAR(jp.payment_date) = @year
+         ORDER BY jp.payment_date DESC, jp.joint_payment_id DESC`;
+    const rows = await query(queryText, period);
+    res.json(rows.map(row => ({ ...row, payment_date: serializeDate(row.payment_date), amount: Number(row.amount) })));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to fetch joint payments" });
+  }
+});
+
+app.post("/joint-payments", async (req, res) => {
+  try {
+    const personId = Number(req.body.person_id);
+    const paymentDate = req.body.payment_date;
+    const amount = Number(req.body.amount);
+    if (!Number.isInteger(personId) || !isIsoDate(paymentDate) || !Number.isFinite(amount) || amount <= 0) {
+      return res.status(400).json({ error: "Valid person, payment date, and positive amount are required" });
+    }
+
+    const prefix = dbType === "postgres" ? "public" : "dbo";
+    const householdPredicate = dbType === "postgres" ? "is_household = TRUE" : "is_household = 1";
+    const people = await query(
+      `SELECT person_id FROM ${prefix}.people
+       WHERE person_id = @person_id AND ${householdPredicate} AND LOWER(name) <> 'joint'`,
+      { person_id: personId }
+    );
+    if (people.length === 0) {
+      return res.status(400).json({ error: "Choose a household member other than the joint account" });
+    }
+
+    const queryText = dbType === "postgres"
+      ? `INSERT INTO public.joint_payments (person_id, payment_date, amount)
+         VALUES (@person_id, @payment_date, @amount)
+         RETURNING joint_payment_id`
+      : `INSERT INTO dbo.joint_payments (person_id, payment_date, amount)
+         OUTPUT INSERTED.joint_payment_id AS joint_payment_id
+         VALUES (@person_id, @payment_date, @amount)`;
+    const rows = await query(queryText, { person_id: personId, payment_date: paymentDate, amount });
+    res.status(201).json({ joint_payment_id: rows[0].joint_payment_id });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to add joint payment" });
+  }
+});
+
+app.delete("/joint-payments/:jointPaymentId", async (req, res) => {
+  try {
+    const jointPaymentId = Number(req.params.jointPaymentId);
+    if (!Number.isInteger(jointPaymentId)) {
+      return res.status(400).json({ error: "A valid joint payment ID is required" });
+    }
+    const queryText = dbType === "postgres"
+      ? `DELETE FROM public.joint_payments
+         WHERE joint_payment_id = @joint_payment_id
+         RETURNING joint_payment_id`
+      : `DELETE FROM dbo.joint_payments
+         OUTPUT DELETED.joint_payment_id AS joint_payment_id
+         WHERE joint_payment_id = @joint_payment_id`;
+    const rows = await query(queryText, { joint_payment_id: jointPaymentId });
+    if (rows.length === 0) return res.status(404).json({ error: "Joint payment not found" });
+    res.json({ joint_payment_id: rows[0].joint_payment_id });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to delete joint payment" });
+  }
+});
+
 app.get("/contributions", async (req, res) => {
   try {
     const period = readMonthYear(req, res);
@@ -607,7 +781,7 @@ app.get("/contributions", async (req, res) => {
       ? `EXTRACT(MONTH FROM ${column}) = @month AND EXTRACT(YEAR FROM ${column}) = @year`
       : `MONTH(${column}) = @month AND YEAR(${column}) = @year`;
 
-    const [people, incomeConfig, extraIncome, personalExpenses, plannedRows] = await Promise.all([
+    const [people, incomeConfig, extraIncome, paychecks, jointPayments, personalExpenses, plannedRows] = await Promise.all([
       query(
         `SELECT person_id, name FROM ${prefix}.people
          WHERE ${householdPredicate} AND LOWER(name) <> 'joint'
@@ -615,7 +789,7 @@ app.get("/contributions", async (req, res) => {
         period
       ),
       query(
-        `SELECT p.person_id, COALESCE(ic.biweekly_amount, 0) AS biweekly_amount
+        `SELECT p.person_id, COALESCE(ic.biweekly_amount, 0) AS biweekly_amount, ic.payday_anchor
          FROM ${prefix}.people p
          LEFT JOIN ${prefix}.income_config ic ON ic.person_id = p.person_id
          WHERE ${householdPredicate} AND LOWER(p.name) <> 'joint'`
@@ -628,10 +802,21 @@ app.get("/contributions", async (req, res) => {
         period
       ),
       query(
-        `SELECT paid_by_person_id AS person_id, SUM(amount) AS amount
+        `SELECT person_id, paycheck_date, transferred_amount
+         FROM ${prefix}.paychecks
+         WHERE ${monthExpression("paycheck_date")}`,
+        period
+      ),
+      query(
+        `SELECT person_id, payment_date, amount
+         FROM ${prefix}.joint_payments
+         WHERE ${monthExpression("payment_date")}`,
+        period
+      ),
+      query(
+        `SELECT paid_by_person_id AS person_id, transaction_date, amount
          FROM ${prefix}.transactions
-         WHERE paid_by_person_id IS NOT NULL AND ${monthExpression("transaction_date")}
-         GROUP BY paid_by_person_id`,
+         WHERE paid_by_person_id IS NOT NULL AND ${monthExpression("transaction_date")}`,
         period
       ),
       query(
@@ -647,8 +832,13 @@ app.get("/contributions", async (req, res) => {
       people,
       incomeConfig,
       extraIncome,
+      paychecks,
+      jointPayments,
       personalExpenses,
       plannedExpenses: plannedRows[0]?.planned_expenses || 0,
+      month: period.month,
+      year: period.year,
+      asOfDate: currentIsoDate(),
     }));
   } catch (error) {
     console.error(error);
@@ -661,13 +851,13 @@ app.get("/income-config", async (req, res) => {
     const prefix = dbType === "postgres" ? "public" : "dbo";
     const householdPredicate = dbType === "postgres" ? "is_household = TRUE" : "is_household = 1";
     const rows = await query(
-      `SELECT p.person_id, p.name, COALESCE(ic.biweekly_amount, 0) AS biweekly_amount
+      `SELECT p.person_id, p.name, COALESCE(ic.biweekly_amount, 0) AS biweekly_amount, ic.payday_anchor
        FROM ${prefix}.people p
        LEFT JOIN ${prefix}.income_config ic ON ic.person_id = p.person_id
        WHERE ${householdPredicate} AND LOWER(p.name) <> 'joint'
        ORDER BY p.person_id`
     );
-    res.json(rows.map(row => ({ ...row, biweekly_amount: Number(row.biweekly_amount) })));
+    res.json(rows.map(row => ({ ...row, biweekly_amount: Number(row.biweekly_amount), payday_anchor: serializeDate(row.payday_anchor) })));
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Failed to fetch income config" });
@@ -678,22 +868,25 @@ app.put("/income-config/:personId", async (req, res) => {
   try {
     const personId = Number(req.params.personId);
     const amount = Number(req.body.biweekly_amount);
-    if (!Number.isInteger(personId) || !Number.isFinite(amount) || amount < 0) {
-      return res.status(400).json({ error: "Valid person ID and non-negative amount are required" });
+    const paydayAnchor = req.body.payday_anchor || null;
+    if (!Number.isInteger(personId) || !Number.isFinite(amount) || amount < 0 || (paydayAnchor !== null && !isIsoDate(paydayAnchor))) {
+      return res.status(400).json({ error: "Valid person ID, non-negative amount, and payday anchor are required" });
     }
     const queryText = dbType === "postgres"
-      ? `INSERT INTO public.income_config (person_id, biweekly_amount)
-         VALUES (@person_id, @amount)
-         ON CONFLICT (person_id) DO UPDATE SET biweekly_amount = EXCLUDED.biweekly_amount
-         RETURNING person_id, biweekly_amount`
+      ? `INSERT INTO public.income_config (person_id, biweekly_amount, payday_anchor)
+         VALUES (@person_id, @amount, @payday_anchor)
+         ON CONFLICT (person_id) DO UPDATE
+         SET biweekly_amount = EXCLUDED.biweekly_amount,
+             payday_anchor = COALESCE(EXCLUDED.payday_anchor, public.income_config.payday_anchor)
+         RETURNING person_id, biweekly_amount, payday_anchor`
       : `MERGE dbo.income_config AS target
-         USING (SELECT @person_id AS person_id, @amount AS biweekly_amount) AS source
+         USING (SELECT @person_id AS person_id, @amount AS biweekly_amount, @payday_anchor AS payday_anchor) AS source
          ON target.person_id = source.person_id
-         WHEN MATCHED THEN UPDATE SET biweekly_amount = source.biweekly_amount
-         WHEN NOT MATCHED THEN INSERT (person_id, biweekly_amount) VALUES (source.person_id, source.biweekly_amount);
-         SELECT person_id, biweekly_amount FROM dbo.income_config WHERE person_id = @person_id`;
-    const rows = await query(queryText, { person_id: personId, amount });
-    res.json({ person_id: personId, biweekly_amount: Number(rows[0].biweekly_amount) });
+         WHEN MATCHED THEN UPDATE SET biweekly_amount = source.biweekly_amount, payday_anchor = COALESCE(source.payday_anchor, target.payday_anchor)
+         WHEN NOT MATCHED THEN INSERT (person_id, biweekly_amount, payday_anchor) VALUES (source.person_id, source.biweekly_amount, source.payday_anchor);
+         SELECT person_id, biweekly_amount, payday_anchor FROM dbo.income_config WHERE person_id = @person_id`;
+    const rows = await query(queryText, { person_id: personId, amount, payday_anchor: paydayAnchor });
+    res.json({ person_id: personId, biweekly_amount: Number(rows[0].biweekly_amount), payday_anchor: serializeDate(rows[0].payday_anchor) });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Failed to save income config" });

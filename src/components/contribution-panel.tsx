@@ -18,9 +18,9 @@ export function ContributionPanel({ summary, action, style }: {
   return (
     <Panel style={style}>
       <SectionHeader
-        title="Per-paycheck joint transfer"
+        title="Joint balance by payday"
         detail={summary && !notConfigured
-          ? `${formatCurrency(summary.planned_expenses, 2)} monthly plan · ${formatCurrency(summary.household_income, 2)} household income`
+          ? `${formatCurrency(summary.planned_expenses, 2)} monthly plan - owed through ${formatShortDate(summary.as_of_date)}`
           : 'Configure bi-weekly pay with the $ button'}
         action={action}
       />
@@ -42,7 +42,11 @@ export function ContributionPanel({ summary, action, style }: {
                   <Text style={styles.percentage}>{person.income_percentage.toFixed(1)}%</Text>
                 </View>
                 <Text style={styles.detail}>
-                  {formatCurrency(person.biweekly_amount, 2)} bi-weekly · {formatCurrency(person.paid_personally, 2)} paid personally
+                  {person.installments_due} of {summary.pay_periods} paydays reached
+                  {person.next_pay_date ? ` - next ${formatShortDate(person.next_pay_date)}` : ''}
+                </Text>
+                <Text style={styles.detail}>
+                  {formatCurrency(person.paid_personally, 2)} paid personally - {formatCurrency(person.transferred_to_joint, 2)} paid to joint
                 </Text>
               </View>
               <View style={[styles.amountCopy, compact && styles.amountCopyCompact]}>
@@ -51,8 +55,8 @@ export function ContributionPanel({ summary, action, style }: {
                   <CircleDollarSign color={BudgetColors.faint} size={11} />
                   <Text style={styles.amountLabelText}>
                     {person.credit > 0
-                      ? `${formatCurrency(person.credit, 2)} credit`
-                      : 'transfer this pay'}
+                      ? `${formatCurrency(person.credit, 2)} ahead`
+                      : person.remaining_due > 0 ? 'owed now' : 'caught up'}
                   </Text>
                 </View>
               </View>
@@ -62,6 +66,10 @@ export function ContributionPanel({ summary, action, style }: {
       )}
     </Panel>
   );
+}
+
+function formatShortDate(value: string) {
+  return new Date(`${value.slice(0, 10)}T12:00:00`).toLocaleDateString('en-CA', { month: 'short', day: 'numeric' });
 }
 
 const styles = StyleSheet.create({

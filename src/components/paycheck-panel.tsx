@@ -1,10 +1,10 @@
-import { CalendarDays, CircleDollarSign, Plus, Trash2, UserRound } from 'lucide-react-native';
+import { CalendarDays, CircleDollarSign, Plus, Save, Trash2, UserRound } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, Pressable, StyleProp, StyleSheet, Text, TextInput, useWindowDimensions, View, ViewStyle } from 'react-native';
 
 import { EmptyState, ErrorNotice, formatCurrency, Panel, SectionHeader } from '@/components/budget-ui';
 import { DateInput } from '@/components/date-input';
-import { addPaycheck, deletePaycheck, getPaychecks, getPeople, Paycheck, Person } from '@/constants/api';
+import { addPaycheck, deletePaycheck, getPaychecks, getPeople, Paycheck, Person, updatePaycheckTransfer } from '@/constants/api';
 import { BudgetColors, Fonts } from '@/constants/theme';
 
 export function PaycheckPanel({ month, year, onChanged, style }: {
@@ -18,9 +18,12 @@ export function PaycheckPanel({ month, year, onChanged, style }: {
   const [paychecks, setPaychecks] = useState<Paycheck[]>([]);
   const [personId, setPersonId] = useState<number | null>(null);
   const [amount, setAmount] = useState('');
+  const [transferredAmount, setTransferredAmount] = useState('');
+  const [transferDrafts, setTransferDrafts] = useState<Record<number, string>>({});
   const [date, setDate] = useState(defaultDate(month, year));
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingTransferId, setSavingTransferId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -32,6 +35,7 @@ export function PaycheckPanel({ month, year, onChanged, style }: {
       const contributors = peopleRows.filter(person => person.name.toLowerCase() !== 'joint');
       setPeople(contributors);
       setPaychecks(paycheckRows);
+      setTransferDrafts(Object.fromEntries(paycheckRows.map(paycheck => [paycheck.paycheck_id, String(paycheck.transferred_amount || 0)])));
       setPersonId(current => contributors.some(person => person.person_id === current) ? current : contributors[0]?.person_id ?? null);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Income could not be loaded.');
@@ -43,17 +47,23 @@ export function PaycheckPanel({ month, year, onChanged, style }: {
   useEffect(() => {
     setDate(defaultDate(month, year));
     setAmount('');
+    setTransferredAmount('');
     load();
   }, [month, year]);
 
   const create = async () => {
     const parsedAmount = Number(amount);
+    const parsedTransferredAmount = Number(transferredAmount || '0');
     if (!personId) {
       setError('Choose who received this paycheck.');
       return;
     }
     if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
       setError('Enter a paycheck amount greater than zero.');
+      return;
+    }
+    if (!Number.isFinite(parsedTransferredAmount) || parsedTransferredAmount < 0) {
+      setError('Transferred amount cannot be negative.');
       return;
     }
     if (!isValidDate(date)) {
@@ -64,10 +74,12 @@ export function PaycheckPanel({ month, year, onChanged, style }: {
     setSaving(true);
     setError(null);
     try {
-      await addPaycheck({ person_id: personId, paycheck_date: date, amount: parsedAmount });
+      await addPaycheck({ person_id: personId, paycheck_date: date, amount: parsedAmount, transferred_amount: parsedTransferredAmount });
       const paycheckRows = await getPaychecks(month, year);
       setPaychecks(paycheckRows);
+      setTransferDrafts(Object.fromEntries(paycheckRows.map(paycheck => [paycheck.paycheck_id, String(paycheck.transferred_amount || 0)])));
       setAmount('');
+      setTransferredAmount('');
       await onChanged();
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'The paycheck could not be saved.');
@@ -88,6 +100,25 @@ export function PaycheckPanel({ month, year, onChanged, style }: {
       setError(removeError instanceof Error ? removeError.message : 'The paycheck could not be deleted.');
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const saveTransfer = async (paycheck: Paycheck) => {
+    const parsed = Number(transferDrafts[paycheck.paycheck_id] ?? '0');
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      setError('Transferred amount cannot be negative.');
+      return;
+    }
+    setSavingTransferId(paycheck.paycheck_id);
+    setError(null);
+    try {
+      await updatePaycheckTransfer(paycheck.paycheck_id, parsed);
+      setPaychecks(current => current.map(item => item.paycheck_id === paycheck.paycheck_id ? { ...item, transferred_amount: parsed } : item));
+      await onChanged();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'The transfer amount could not be saved.');
+    } finally {
+      setSavingTransferId(null);
     }
   };
 
@@ -117,6 +148,10 @@ export function PaycheckPanel({ month, year, onChanged, style }: {
               <View style={styles.amountInput}><Text style={styles.dollar}>$</Text><TextInput value={amount} onChangeText={value => setAmount(value.replace(/[^0-9.]/g, ''))} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor={BudgetColors.faint} style={styles.input} /></View>
             </View>
             <View style={styles.formField}>
+              <View style={styles.labelRow}><CircleDollarSign color={BudgetColors.muted} size={15} /><Text style={styles.label}>Transferred to joint</Text></View>
+              <View style={styles.amountInput}><Text style={styles.dollar}>$</Text><TextInput value={transferredAmount} onChangeText={value => setTransferredAmount(value.replace(/[^0-9.]/g, ''))} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor={BudgetColors.faint} style={styles.input} /></View>
+            </View>
+            <View style={styles.formField}>
               <View style={styles.labelRow}><CalendarDays color={BudgetColors.muted} size={15} /><Text style={styles.label}>Pay date</Text></View>
               <DateInput value={date} onChange={setDate} />
             </View>
@@ -136,7 +171,28 @@ export function PaycheckPanel({ month, year, onChanged, style }: {
                   <Text style={styles.paycheckName}>{paycheck.person_name}</Text>
                   <Text style={styles.paycheckDate}>{formatPaycheckDate(paycheck.paycheck_date)}</Text>
                 </View>
-                <Text style={styles.paycheckAmount}>{formatCurrency(paycheck.amount, 2)}</Text>
+                <View style={styles.paycheckValues}>
+                  <Text style={styles.paycheckAmount}>{formatCurrency(paycheck.amount, 2)}</Text>
+                  <Text style={styles.paycheckTransferLabel}>to joint</Text>
+                  <View style={styles.transferInputWrap}>
+                    <Text style={styles.dollar}>$</Text>
+                    <TextInput
+                      value={transferDrafts[paycheck.paycheck_id] ?? '0'}
+                      onChangeText={value => setTransferDrafts(current => ({ ...current, [paycheck.paycheck_id]: value.replace(/[^0-9.]/g, '') }))}
+                      keyboardType="decimal-pad"
+                      style={styles.transferInput}
+                    />
+                  </View>
+                  <Pressable
+                    accessibilityLabel={`Save transfer amount for ${paycheck.person_name}`}
+                    disabled={savingTransferId === paycheck.paycheck_id}
+                    onPress={() => saveTransfer(paycheck)}
+                    style={({ pressed }) => [styles.saveTransferButton, pressed && styles.pressed]}>
+                    {savingTransferId === paycheck.paycheck_id
+                      ? <ActivityIndicator color={BudgetColors.green} size="small" />
+                      : <Save color={BudgetColors.green} size={15} />}
+                  </Pressable>
+                </View>
                 <Pressable accessibilityLabel={`Delete ${paycheck.person_name} paycheck`} disabled={deletingId === paycheck.paycheck_id} onPress={() => remove(paycheck)} style={({ pressed }) => [styles.deleteButton, pressed && styles.pressed]}>
                   {deletingId === paycheck.paycheck_id ? <ActivityIndicator color={BudgetColors.coral} size="small" /> : <Trash2 color={BudgetColors.coral} size={16} />}
                 </Pressable>
@@ -198,7 +254,12 @@ const styles = StyleSheet.create({
   paycheckCopy: { flex: 1, minWidth: 0, gap: 2 },
   paycheckName: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' },
   paycheckDate: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 10 },
+  paycheckValues: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' },
   paycheckAmount: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' },
+  paycheckTransferLabel: { color: BudgetColors.faint, fontFamily: Fonts.sans, fontSize: 9, fontWeight: '700', textTransform: 'uppercase' },
+  transferInputWrap: { width: 112, height: 34, borderRadius: 7, borderWidth: 1, borderColor: BudgetColors.line, backgroundColor: BudgetColors.canvas, flexDirection: 'row', alignItems: 'center' },
+  transferInput: { flex: 1, minWidth: 0, height: 32, paddingHorizontal: 6, color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '700' },
+  saveTransferButton: { width: 32, height: 32, borderRadius: 6, alignItems: 'center', justifyContent: 'center', backgroundColor: BudgetColors.greenSoft },
   deleteButton: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' },
   disabled: { opacity: 0.55 },
   pressed: { opacity: 0.68 },

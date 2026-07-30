@@ -5,7 +5,7 @@ import { ActivityIndicator, Pressable, RefreshControl, StyleSheet, Text, useWind
 
 import { EmptyState, ErrorNotice, formatCurrency, Page, PageHeading, Panel, SectionHeader, StatCard, YearSwitcher } from '@/components/budget-ui';
 import { ContributionPanel } from '@/components/contribution-panel';
-import { BudgetLine, CategorySummary, ContributionSummary, getBudgetLines, getCategorySummary, getContributionSummary, getMonthlySummary, getTransactions, getYtdSummary, MonthlySummary, Transaction, YtdSummary } from '@/constants/api';
+import { BudgetLine, ContributionSummary, getBudgetLines, getContributionSummary, getMonthlySummary, getTransactions, getYtdSummary, MonthlySummary, Transaction, YtdSummary } from '@/constants/api';
 import { BudgetColors, Fonts } from '@/constants/theme';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -20,7 +20,6 @@ export default function DashboardScreen() {
   const [monthly, setMonthly] = useState<MonthlySummary[]>([]);
   const [ytd, setYtd] = useState<YtdSummary | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [categories, setCategories] = useState<CategorySummary[]>([]);
   const [budgetLines, setBudgetLines] = useState<BudgetLine[]>([]);
   const [contribution, setContribution] = useState<ContributionSummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -35,11 +34,10 @@ export default function DashboardScreen() {
     refresh ? setRefreshing(true) : setLoading(true);
     setError(null);
     try {
-      const [monthlyRows, ytdRows, transactionRows, categoryRows, budgetRows, contributionRows] = await Promise.all([
+      const [monthlyRows, ytdRows, transactionRows, budgetRows, contributionRows] = await Promise.all([
         getMonthlySummary(targetYear),
         getYtdSummary(targetYear),
         getTransactions(targetMonth, targetYear),
-        getCategorySummary(targetMonth, targetYear),
         getBudgetLines(targetMonth, targetYear),
         getContributionSummary(targetMonth, targetYear),
       ]);
@@ -47,7 +45,6 @@ export default function DashboardScreen() {
       setMonthly(monthlyRows);
       setYtd(ytdRows);
       setTransactions(transactionRows);
-      setCategories(categoryRows);
       setBudgetLines(budgetRows);
       setContribution(contributionRows);
     } catch (loadError) {
@@ -72,15 +69,13 @@ export default function DashboardScreen() {
     setMonthLoading(true);
     setError(null);
     try {
-      const [transactionRows, categoryRows, budgetRows, contributionRows] = await Promise.all([
+      const [transactionRows, budgetRows, contributionRows] = await Promise.all([
         getTransactions(month, year),
-        getCategorySummary(month, year),
         getBudgetLines(month, year),
         getContributionSummary(month, year),
       ]);
       if (requestId !== monthRequest.current) return;
       setTransactions(transactionRows);
-      setCategories(categoryRows);
       setBudgetLines(budgetRows);
       setContribution(contributionRows);
     } catch (loadError) {
@@ -107,7 +102,6 @@ export default function DashboardScreen() {
   const incomeRemaining = monthlyIncome - monthSpend;
   const spendPct = monthlyIncome > 0 ? Math.min(monthSpend / monthlyIncome * 100, 100) : 0;
   const maxMonth = Math.max(...totalsByMonth, 1);
-  const maxCategory = Math.max(...categories.map(category => category.total), 1);
   const maxYtdAverage = Math.max(...(ytd?.category_averages.map(category => category.monthly_average) || []), 1);
   const selectedMonthName = new Date(year, selectedMonth - 1, 1).toLocaleDateString('en-CA', { month: 'long' });
 
@@ -179,22 +173,6 @@ export default function DashboardScreen() {
                   </Pressable>;
                 })}
               </View>
-            </Panel>
-
-            <Panel style={styles.categoryPanel}>
-              <SectionHeader title={`${selectedMonthName} by category`} detail="Where household spending landed" />
-              {categories.every(category => category.total === 0) ? <EmptyState title="No category activity" detail="Add a transaction to see this breakdown." /> : (
-                <View style={styles.categoryList}>
-                  {categories.filter(category => category.total > 0).slice(0, 6).map((category, index) => <View key={category.category_id} style={styles.categoryRow}>
-                    <View style={styles.categoryLine}>
-                      <View style={[styles.rank, index === 0 && styles.rankFirst]}><Text style={styles.rankText}>{index + 1}</Text></View>
-                      <Text style={styles.categoryName} numberOfLines={1}>{category.category}</Text>
-                      <Text style={styles.categoryAmount}>{formatCurrency(category.total)}</Text>
-                    </View>
-                    <View style={styles.progressTrack}><View style={[styles.progressFill, { width: `${Math.max(3, category.total / maxCategory * 100)}%` }]} /></View>
-                  </View>)}
-                </View>
-              )}
             </Panel>
           </View>
 
@@ -272,7 +250,6 @@ const styles = StyleSheet.create({
   twoColumn: { flexDirection: 'row', alignItems: 'stretch', gap: 16 },
   oneColumn: { flexDirection: 'column' },
   chartPanel: { flex: 1.45, minWidth: 0 },
-  categoryPanel: { flex: 1, minWidth: 0 },
   inlineAction: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 5 },
   inlineActionText: { color: BudgetColors.green, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' },
   chart: { height: 184, flexDirection: 'row', alignItems: 'flex-end', gap: 5 },
@@ -285,26 +262,7 @@ const styles = StyleSheet.create({
   barFuture: { backgroundColor: BudgetColors.barFuture },
   barLabel: { color: BudgetColors.faint, fontFamily: Fonts.sans, fontSize: 9 },
   barLabelActive: { color: BudgetColors.ink, fontWeight: '800' },
-  categoryList: { gap: 15 },
-  categoryRow: { gap: 7 },
-  categoryLine: { flexDirection: 'row', alignItems: 'center', gap: 9 },
-  rank: { width: 22, height: 22, borderRadius: 5, backgroundColor: BudgetColors.canvas, alignItems: 'center', justifyContent: 'center' },
-  rankFirst: { backgroundColor: BudgetColors.goldSoft },
-  rankText: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 10, fontWeight: '800' },
-  categoryName: { flex: 1, color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '700' },
-  categoryAmount: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' },
-  progressTrack: { height: 4, marginLeft: 31, borderRadius: 2, backgroundColor: BudgetColors.canvas, overflow: 'hidden' },
-  progressFill: { height: 4, borderRadius: 2, backgroundColor: BudgetColors.green },
-  ytdCategoryPanel: { flex: 1.2, minWidth: 0 },
   variancePanel: { flex: 1, minWidth: 0 },
-  ytdCategoryList: { gap: 15 },
-  ytdCategoryRow: { gap: 6 },
-  ytdCategoryHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
-  ytdCategoryName: { flex: 1, color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' },
-  ytdCategoryAverage: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '800' },
-  ytdProgressTrack: { height: 6, borderRadius: 3, backgroundColor: BudgetColors.canvas, overflow: 'hidden' },
-  ytdProgressFill: { height: 6, borderRadius: 3, backgroundColor: BudgetColors.blue },
-  ytdCategoryTotal: { color: BudgetColors.faint, fontFamily: Fonts.sans, fontSize: 9 },
   varianceRow: { minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: 10, borderTopWidth: 1, borderTopColor: BudgetColors.line },
   varianceRowFirst: { borderTopWidth: 0 },
   varianceDot: { width: 8, height: 8, borderRadius: 4 },
