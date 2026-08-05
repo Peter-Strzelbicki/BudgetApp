@@ -58,4 +58,4 @@ export const Fonts = Platform.select({
   },
 });
 
-export const MaxContentWidth = 1180;
+export const MaxContentWidth = 1320;

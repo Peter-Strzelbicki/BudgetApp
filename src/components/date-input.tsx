@@ -1,5 +1,6 @@
 import { CalendarDays } from 'lucide-react-native';
-import { StyleSheet, TextInput, View } from 'react-native';
+import { useRef } from 'react';
+import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import { BudgetColors, Fonts } from '@/constants/theme';
 
@@ -10,10 +11,15 @@ interface DateInputProps {
 }
 
 export function DateInput({ value, onChange, placeholder = 'YYYY-MM-DD' }: DateInputProps) {
+  const inputRef = useRef<TextInput>(null);
+
   return (
-    <View style={styles.container}>
-      <CalendarDays color={BudgetColors.muted} size={17} style={styles.icon} />
+    <Pressable onPress={() => inputRef.current?.focus()} style={({ pressed }) => [styles.container, pressed && styles.pressed]}>
+      <View pointerEvents="none">
+        <CalendarDays color={BudgetColors.muted} size={17} style={styles.icon} />
+      </View>
       <TextInput
+        ref={inputRef}
         value={value}
         onChangeText={onChange}
         placeholder={placeholder}
@@ -21,7 +27,7 @@ export function DateInput({ value, onChange, placeholder = 'YYYY-MM-DD' }: DateI
         keyboardType="numbers-and-punctuation"
         style={styles.input}
       />
-    </View>
+    </Pressable>
   );
 }
 
@@ -36,6 +42,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 12,
     gap: 8,
+  },
+  pressed: {
+    opacity: 0.85,
   },
   icon: {},
   input: {

@@ -8,6 +8,7 @@ WEB_SERVICE="expo-app.service"
 API_SERVICE="budget-api.service"
 BACKUP_SERVICE="budget-backup.service"
 BACKUP_TIMER="budget-backup.timer"
+NGINX_CONFIG="$APP_ROOT/src/server/homebudget-nginx.conf"
 
 if [[ ! -f "$SOURCE_ARCHIVE" || ! -f "$WEB_ARCHIVE" ]]; then
   echo "Deployment archives are missing." >&2
@@ -18,14 +19,26 @@ mkdir -p "$APP_ROOT"
 tar -xzf "$SOURCE_ARCHIVE" -C "$APP_ROOT"
 
 cd "$APP_ROOT"
-npm install --omit=dev --no-audit --no-fund
-npm --prefix src/server install --omit=dev --no-audit --no-fund
+
+LOCKFILE_HASH_FILE="$APP_ROOT/.deploy-lockfile-hash"
+CURRENT_LOCKFILE_HASH=$(cat package-lock.json src/server/package-lock.json | sha256sum | awk '{print $1}')
+if [[ -f "$LOCKFILE_HASH_FILE" && "$(cat "$LOCKFILE_HASH_FILE")" == "$CURRENT_LOCKFILE_HASH" ]]; then
+  echo "Dependencies unchanged; skipping npm install."
+else
+  npm install --omit=dev --no-audit --no-fund
+  npm --prefix src/server install --omit=dev --no-audit --no-fund
+  echo "$CURRENT_LOCKFILE_HASH" > "$LOCKFILE_HASH_FILE"
+fi
 
 sudo systemd-analyze verify "$APP_ROOT/expo-app.service" "$APP_ROOT/src/server/budget-api.service" "$APP_ROOT/src/server/$BACKUP_SERVICE" "$APP_ROOT/src/server/$BACKUP_TIMER"
 sudo install -m 644 "$APP_ROOT/expo-app.service" "/etc/systemd/system/$WEB_SERVICE"
 sudo install -m 644 "$APP_ROOT/src/server/budget-api.service" "/etc/systemd/system/$API_SERVICE"
 sudo install -m 644 "$APP_ROOT/src/server/$BACKUP_SERVICE" "/etc/systemd/system/$BACKUP_SERVICE"
 sudo install -m 644 "$APP_ROOT/src/server/$BACKUP_TIMER" "/etc/systemd/system/$BACKUP_TIMER"
+sudo install -m 644 "$NGINX_CONFIG" /etc/nginx/sites-available/homebudget
+sudo ln -sf /etc/nginx/sites-available/homebudget /etc/nginx/sites-enabled/homebudget
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t
 
 rm -rf "$APP_ROOT/dist.new"
 mkdir "$APP_ROOT/dist.new"
@@ -52,19 +65,22 @@ sudo systemctl daemon-reload
 sudo systemctl enable "$WEB_SERVICE" "$API_SERVICE" "$BACKUP_TIMER" >/dev/null
 sudo systemctl restart "$API_SERVICE" "$WEB_SERVICE"
 sudo systemctl start "$BACKUP_TIMER"
+sudo systemctl reload nginx
 
 curl --fail --silent --show-error \
-  --retry 15 --retry-connrefused --retry-delay 2 \
+  --retry 15 --retry-connrefused --retry-delay 1 \
   --max-time 15 http://127.0.0.1:3000/test-db >/dev/null
 curl --fail --silent --show-error \
   --retry 10 --retry-connrefused --retry-delay 1 \
   --max-time 15 http://127.0.0.1:8081/ >/dev/null
 curl --fail --silent --show-error \
   --max-time 15 http://127.0.0.1:8081/budget >/dev/null
+curl --fail --silent --show-error \
+  --max-time 15 -H 'Host: homebudget' http://127.0.0.1/api/test-db >/dev/null
 
 trap - ERR
 rm -rf "$APP_ROOT/dist.old"
 rm -f "$SOURCE_ARCHIVE" "$WEB_ARCHIVE" /tmp/deploy-pi-remote.sh
 
 echo "HomeBudget deployment complete."
-systemctl is-active "$WEB_SERVICE" "$API_SERVICE" "$BACKUP_TIMER"
+systemctl is-active "$WEB_SERVICE" "$API_SERVICE" "$BACKUP_TIMER" nginx

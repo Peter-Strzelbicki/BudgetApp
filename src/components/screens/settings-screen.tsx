@@ -1,10 +1,12 @@
-import { CheckCircle2, Database, Globe2, RefreshCw, Server, Wifi, XCircle } from 'lucide-react-native';
+import Constants from 'expo-constants';
+import { CheckCircle2, Database, Globe2, Info, Moon, RefreshCw, Server, Sun, Wifi, XCircle } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Page, PageHeading, Panel, SectionHeader } from '@/components/budget-ui';
 import { API_URL, BackupStatus, getApiStatus, getBackupStatus, getCategories, runBackupNow } from '@/constants/api';
 import { BudgetColors, Fonts } from '@/constants/theme';
+import { useBudgetTheme } from '@/hooks/use-budget-theme';
 
 type ConnectionState = 'checking' | 'online' | 'offline';
 
@@ -17,6 +19,7 @@ export default function SettingsScreen() {
   const [backupLoading, setBackupLoading] = useState(true);
   const [backupRunning, setBackupRunning] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const { mode, toggle: toggleTheme } = useBudgetTheme();
 
   const check = async () => {
     setState('checking'); setMessage(null);
@@ -98,8 +101,22 @@ export default function SettingsScreen() {
       </View>
     </Panel>
     <Panel>
+      <SectionHeader title="Appearance" detail="Choose how HomeBudget looks on this device" />
+      <View style={styles.appearanceRow}>
+        <View style={styles.appearanceIcon}>{mode === 'dark' ? <Moon color={BudgetColors.blue} size={20} /> : <Sun color={BudgetColors.gold} size={20} />}</View>
+        <View style={styles.appearanceCopy}><Text style={styles.appearanceTitle}>{mode === 'dark' ? 'Dark mode' : 'Light mode'}</Text><Text style={styles.appearanceDetail}>Applies instantly and remembers your choice on this device</Text></View>
+        <Pressable onPress={toggleTheme} style={({ pressed }) => [styles.appearanceButton, pressed && styles.pressed]}>
+          <Text style={styles.appearanceButtonText}>Switch to {mode === 'dark' ? 'light' : 'dark'}</Text>
+        </Pressable>
+      </View>
+    </Panel>
+    <Panel>
       <SectionHeader title="Network" detail="Raspberry Pi household deployment" />
       <View style={styles.networkRow}><View style={styles.networkIcon}><Wifi color={BudgetColors.green} size={20} /></View><View style={styles.networkCopy}><Text style={styles.networkTitle}>Private home network</Text><Text style={styles.networkDetail}>192.168.2.107 · Web 8081 · API 3000 · PostgreSQL 5432</Text></View></View>
+    </Panel>
+    <Panel>
+      <SectionHeader title="About" detail="App build information" />
+      <View style={styles.networkRow}><View style={styles.networkIcon}><Info color={BudgetColors.muted} size={20} /></View><View style={styles.networkCopy}><Text style={styles.networkTitle}>HomeBudget v{Constants.expoConfig?.version ?? '1.0.0'}</Text><Text style={styles.networkDetail}>Running on {Platform.OS} · Expo SDK 57</Text></View></View>
     </Panel>
   </Page>;
 }
@@ -116,4 +133,5 @@ const styles = StyleSheet.create({
   metrics: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 }, metric: { minWidth: 180, flex: 1, padding: 14, borderRadius: 7, backgroundColor: BudgetColors.canvas, gap: 5 }, metricLabel: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 10, fontWeight: '700' }, metricValue: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' }, onlineText: { color: BudgetColors.green }, offlineText: { color: BudgetColors.coral },
   backupRow: { minHeight: 74, flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap' }, backupIcon: { width: 42, height: 42, borderRadius: 8, backgroundColor: BudgetColors.goldSoft, alignItems: 'center', justifyContent: 'center' }, backupCopy: { flex: 1, minWidth: 210, gap: 3 }, backupTitle: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 13, fontWeight: '800' }, backupDetail: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11 }, backupHint: { color: BudgetColors.faint, fontFamily: Fonts.sans, fontSize: 10 }, backupButton: { minHeight: 42, paddingHorizontal: 14, borderRadius: 8, backgroundColor: BudgetColors.green, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 }, backupButtonText: { color: BudgetColors.surface, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' }, backupDisabled: { opacity: 0.65 },
   networkRow: { flexDirection: 'row', alignItems: 'center', gap: 13 }, networkIcon: { width: 42, height: 42, borderRadius: 8, backgroundColor: BudgetColors.greenSoft, alignItems: 'center', justifyContent: 'center' }, networkCopy: { flex: 1, gap: 3 }, networkTitle: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 13, fontWeight: '800' }, networkDetail: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11 },
+  appearanceRow: { minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap' }, appearanceIcon: { width: 42, height: 42, borderRadius: 8, backgroundColor: BudgetColors.canvas, alignItems: 'center', justifyContent: 'center' }, appearanceCopy: { flex: 1, minWidth: 180, gap: 3 }, appearanceTitle: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 13, fontWeight: '800' }, appearanceDetail: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11 }, appearanceButton: { minHeight: 38, paddingHorizontal: 14, borderRadius: 8, borderWidth: 1, borderColor: BudgetColors.line, backgroundColor: BudgetColors.surface, alignItems: 'center', justifyContent: 'center' }, appearanceButtonText: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' },
 });

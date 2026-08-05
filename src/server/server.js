@@ -10,7 +10,12 @@ const cors = require("cors");
 const multer = require("multer");
 const { Pool } = require("pg");
 const { calculateContributionSummary } = require("./contributions");
-const { buildIncomeYearSummary, resolveIncomeConfig } = require("./income-history");
+const {
+  INCOME_TRACKING_START_MONTH,
+  INCOME_TRACKING_START_YEAR,
+  buildIncomeYearSummary,
+  resolveIncomeConfig,
+} = require("./income-history");
 const { parseBudgetWorkbook } = require("./import-xlsx");
 const { commitBudgetImport, findUnmatchedPayers } = require("./import-xlsx-db");
 
@@ -279,6 +284,9 @@ async function ensureFeatureSchema() {
       ALTER TABLE public.paychecks
       ADD COLUMN IF NOT EXISTS transferred_amount NUMERIC(10, 2) NOT NULL DEFAULT 0`);
     await query(`
+      ALTER TABLE public.paychecks
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`);
+    await query(`
       CREATE INDEX IF NOT EXISTS ix_paychecks_person_date
       ON public.paychecks (person_id, paycheck_date)`);
     await query(`
@@ -321,8 +329,26 @@ async function ensureFeatureSchema() {
         amount NUMERIC(10, 2) NOT NULL CHECK (amount > 0)
       )`);
     await query(`
+      ALTER TABLE public.joint_payments
+      DROP CONSTRAINT IF EXISTS joint_payments_amount_check`);
+    await query(`
+      ALTER TABLE public.joint_payments
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`);
+    await query(`
       CREATE INDEX IF NOT EXISTS ix_joint_payments_person_date
       ON public.joint_payments (person_id, payment_date)`);
+    await query(`
+      ALTER TABLE public.transactions
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`);
+    await query(`
+      CREATE INDEX IF NOT EXISTS ix_transactions_date
+      ON public.transactions (transaction_date)`);
+    await query(`
+      CREATE INDEX IF NOT EXISTS ix_transactions_subcategory
+      ON public.transactions (subcategory_id)`);
+    await query(`
+      CREATE INDEX IF NOT EXISTS ix_transactions_person_date
+      ON public.transactions (paid_by_person_id, transaction_date)`);
     await query(`
       CREATE TABLE IF NOT EXISTS public.extra_income (
         extra_income_id BIGSERIAL PRIMARY KEY,
@@ -370,6 +396,9 @@ async function ensureFeatureSchema() {
   await query(`
     IF COL_LENGTH('dbo.paychecks', 'transferred_amount') IS NULL
       ALTER TABLE dbo.paychecks ADD transferred_amount DECIMAL(10,2) NOT NULL CONSTRAINT DF_paychecks_transferred_amount DEFAULT (0)`);
+  await query(`
+    IF COL_LENGTH('dbo.paychecks', 'created_at') IS NULL
+      ALTER TABLE dbo.paychecks ADD created_at DATETIME2(0) NOT NULL CONSTRAINT DF_paychecks_created_at DEFAULT (SYSUTCDATETIME())`);
   await query(`
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_paychecks_person_date' AND object_id = OBJECT_ID(N'dbo.paychecks'))
       CREATE INDEX IX_paychecks_person_date ON dbo.paychecks(person_id, paycheck_date)`);
@@ -432,8 +461,34 @@ async function ensureFeatureSchema() {
       );
     END`);
   await query(`
+    DECLARE @jointPaymentAmountConstraint sysname;
+    SELECT TOP 1 @jointPaymentAmountConstraint = cc.name
+    FROM sys.check_constraints cc
+    JOIN sys.columns col
+      ON col.object_id = cc.parent_object_id
+     AND col.column_id = cc.parent_column_id
+    WHERE cc.parent_object_id = OBJECT_ID(N'dbo.joint_payments')
+      AND col.name = N'amount';
+    IF @jointPaymentAmountConstraint IS NOT NULL
+      EXEC(N'ALTER TABLE dbo.joint_payments DROP CONSTRAINT ' + QUOTENAME(@jointPaymentAmountConstraint));`);
+  await query(`
+    IF COL_LENGTH('dbo.joint_payments', 'created_at') IS NULL
+      ALTER TABLE dbo.joint_payments ADD created_at DATETIME2(0) NOT NULL CONSTRAINT DF_joint_payments_created_at DEFAULT (SYSUTCDATETIME())`);
+  await query(`
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_joint_payments_person_date' AND object_id = OBJECT_ID(N'dbo.joint_payments'))
       CREATE INDEX IX_joint_payments_person_date ON dbo.joint_payments(person_id, payment_date)`);
+  await query(`
+    IF COL_LENGTH('dbo.transactions', 'created_at') IS NULL
+      ALTER TABLE dbo.transactions ADD created_at DATETIME2(0) NOT NULL CONSTRAINT DF_transactions_created_at DEFAULT (SYSUTCDATETIME())`);
+  await query(`
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_transactions_date' AND object_id = OBJECT_ID(N'dbo.transactions'))
+      CREATE INDEX IX_transactions_date ON dbo.transactions(transaction_date)`);
+  await query(`
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_transactions_subcategory' AND object_id = OBJECT_ID(N'dbo.transactions'))
+      CREATE INDEX IX_transactions_subcategory ON dbo.transactions(subcategory_id)`);
+  await query(`
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_transactions_person_date' AND object_id = OBJECT_ID(N'dbo.transactions'))
+      CREATE INDEX IX_transactions_person_date ON dbo.transactions(paid_by_person_id, transaction_date)`);
   await query(`
     IF OBJECT_ID(N'dbo.extra_income', N'U') IS NULL
     BEGIN
@@ -653,7 +708,7 @@ app.post("/transactions", async (req, res) => {
     const { subcategory_id, transaction_date, amount, location, paid_by_person_id, notes } = req.body;
 
     if (!Number.isInteger(Number(subcategory_id)) || !isIsoDate(transaction_date) ||
-        !Number.isFinite(Number(amount)) || Number(amount) <= 0) {
+        !Number.isFinite(Number(amount)) || Number(amount) === 0) {
       return res.status(400).json({ error: "Valid subcategory, transaction date, and amount are required" });
     }
 
@@ -703,7 +758,7 @@ app.put("/transactions/:transactionId", async (req, res) => {
     const transactionId = Number(req.params.transactionId);
     const { subcategory_id, transaction_date, amount, location, paid_by_person_id, notes } = req.body;
     if (!Number.isInteger(transactionId) || !Number.isInteger(Number(subcategory_id)) ||
-        !isIsoDate(transaction_date) || !Number.isFinite(Number(amount)) || Number(amount) <= 0) {
+        !isIsoDate(transaction_date) || !Number.isFinite(Number(amount)) || Number(amount) === 0) {
       return res.status(400).json({ error: "Valid transaction, subcategory, date, and amount are required" });
     }
 
@@ -920,8 +975,8 @@ app.post("/joint-payments", async (req, res) => {
     const personId = Number(req.body.person_id);
     const paymentDate = req.body.payment_date;
     const amount = Number(req.body.amount);
-    if (!Number.isInteger(personId) || !isIsoDate(paymentDate) || !Number.isFinite(amount) || amount <= 0) {
-      return res.status(400).json({ error: "Valid person, payment date, and positive amount are required" });
+    if (!Number.isInteger(personId) || !isIsoDate(paymentDate) || !Number.isFinite(amount) || amount === 0) {
+      return res.status(400).json({ error: "Valid person, payment date, and non-zero amount are required" });
     }
 
     const prefix = dbType === "postgres" ? "public" : "dbo";
@@ -976,12 +1031,13 @@ app.get("/contributions", async (req, res) => {
   try {
     const period = readMonthYear(req, res);
     if (!period) return;
+    const asOfDate = currentIsoDate();
     const prefix = dbType === "postgres" ? "public" : "dbo";
     const monthExpression = column => dbType === "postgres"
       ? `EXTRACT(MONTH FROM ${column}) = @month AND EXTRACT(YEAR FROM ${column}) = @year`
       : `MONTH(${column}) = @month AND YEAR(${column}) = @year`;
 
-    const [income, extraIncome, paychecks, jointPayments, personalExpenses, plannedRows] = await Promise.all([
+    const [income, extraIncome, paychecks, jointPayments, personalExpenses, lastJointPayments, plannedRows] = await Promise.all([
       loadIncomeConfiguration(period.month, period.year),
       query(
         `SELECT person_id, SUM(amount) AS amount
@@ -991,29 +1047,58 @@ app.get("/contributions", async (req, res) => {
         period
       ),
       query(
-        `SELECT person_id, paycheck_date, transferred_amount
+        `SELECT person_id, paycheck_date, transferred_amount, created_at
          FROM ${prefix}.paychecks
          WHERE ${monthExpression("paycheck_date")}`,
         period
       ),
       query(
-        `SELECT person_id, payment_date, amount
+        `SELECT person_id, payment_date, amount, created_at
          FROM ${prefix}.joint_payments
          WHERE ${monthExpression("payment_date")}`,
         period
       ),
       query(
-        `SELECT paid_by_person_id AS person_id, transaction_date, amount
-         FROM ${prefix}.transactions
-         WHERE paid_by_person_id IS NOT NULL AND ${monthExpression("transaction_date")}`,
-        period
+        `SELECT tx.paid_by_person_id AS person_id,
+                tx.transaction_date,
+                tx.amount,
+                tx.created_at,
+                c.name AS category,
+                sc.name AS subcategory,
+                tx.location
+         FROM ${prefix}.transactions tx
+         LEFT JOIN ${prefix}.subcategories sc ON sc.subcategory_id = tx.subcategory_id
+         LEFT JOIN ${prefix}.categories c ON c.category_id = sc.category_id
+         WHERE tx.paid_by_person_id IS NOT NULL AND tx.transaction_date <= @as_of_date`,
+        { as_of_date: asOfDate }
       ),
       query(
-        `SELECT COALESCE(SUM(bl.projected_amount), 0) AS planned_expenses
+        `SELECT person_id, payment_date AS last_payment_date, created_at AS last_payment_at, joint_payment_id AS event_id
+         FROM (
+           SELECT person_id, payment_date, created_at, joint_payment_id
+           FROM ${prefix}.joint_payments
+           WHERE amount >= 0 AND payment_date <= @as_of_date
+
+           UNION ALL
+
+           SELECT person_id, paycheck_date AS payment_date, created_at, paycheck_id AS joint_payment_id
+           FROM ${prefix}.paychecks
+           WHERE transferred_amount > 0 AND paycheck_date <= @as_of_date
+         ) payment_events`,
+        { as_of_date: asOfDate }
+      ),
+      query(
+        `SELECT COALESCE(SUM(
+           CASE
+             WHEN LOWER(COALESCE(sc.name, '')) = @personal_expenses_name THEN 0
+             ELSE COALESCE(bl.projected_amount, 0)
+           END
+         ), 0) AS planned_expenses
          FROM ${prefix}.budget_periods bp
          LEFT JOIN ${prefix}.budget_lines bl ON bl.period_id = bp.period_id
+         LEFT JOIN ${prefix}.subcategories sc ON sc.subcategory_id = bl.subcategory_id
          WHERE bp.month = @month AND bp.year = @year`,
-        period
+        { ...period, personal_expenses_name: "personal expenses" }
       ),
     ]);
 
@@ -1023,11 +1108,12 @@ app.get("/contributions", async (req, res) => {
       extraIncome,
       paychecks,
       jointPayments,
+      lastJointPayments,
       personalExpenses,
       plannedExpenses: plannedRows[0]?.planned_expenses || 0,
       month: period.month,
       year: period.year,
-      asOfDate: currentIsoDate(),
+      asOfDate,
     }));
   } catch (error) {
     console.error(error);
@@ -1185,24 +1271,37 @@ app.delete("/extra-income/:extraIncomeId", async (req, res) => {
 
 app.get("/summary/monthly", async (req, res) => {
   try {
-    const { year } = req.query;
-    if (!year) {
+    const requestedYear = Number(req.query.year);
+    if (!Number.isInteger(requestedYear)) {
       return res.status(400).json({ error: "year is required" });
+    }
+
+    const trackedRange = getTrackedMonthRangeForYear(requestedYear);
+    if (!trackedRange) {
+      return res.json([]);
     }
 
     const queryText = dbType === "postgres"
       ? `SELECT EXTRACT(MONTH FROM transaction_date) AS month, SUM(amount) AS total
          FROM public.transactions
          WHERE EXTRACT(YEAR FROM transaction_date) = @year
+           AND EXTRACT(MONTH FROM transaction_date) >= @start_month
+           AND EXTRACT(MONTH FROM transaction_date) <= @end_month
          GROUP BY EXTRACT(MONTH FROM transaction_date)
          ORDER BY month`
       : `SELECT MONTH(transaction_date) AS month, SUM(amount) AS total
          FROM dbo.transactions
          WHERE YEAR(transaction_date) = @year
+           AND MONTH(transaction_date) >= @start_month
+           AND MONTH(transaction_date) <= @end_month
          GROUP BY MONTH(transaction_date)
          ORDER BY month`;
 
-    const rows = await query(queryText, { year: Number(year) });
+    const rows = await query(queryText, {
+      year: requestedYear,
+      start_month: trackedRange.startMonth,
+      end_month: trackedRange.endMonth,
+    });
     res.json(rows);
   } catch (error) {
     console.error(error);
@@ -1409,36 +1508,41 @@ app.get("/summary/ytd", async (req, res) => {
       return res.status(400).json({ error: "A valid year is required" });
     }
 
-    const today = new Date();
-    const currentYear = today.getFullYear();
-    const monthsElapsed = requestedYear < currentYear
-      ? 12
-      : requestedYear === currentYear
-        ? today.getMonth() + 1
-        : 1;
-    const monthRows = Array.from({ length: monthsElapsed }, (_, index) => `(${index + 1})`).join(", ");
+    const trackedRange = getTrackedMonthRangeForYear(requestedYear);
+    if (!trackedRange) {
+      return res.json({
+        year: requestedYear,
+        months_elapsed: 0,
+        category_averages: [],
+        monthly_variance: [],
+      });
+    }
+
+    const monthRows = trackedRange.months.map(month => `(${month})`).join(", ");
 
     const categoryQuery = dbType === "postgres"
       ? `SELECT c.category_id, c.name AS category,
                 COALESCE(SUM(t.amount), 0) AS total,
-                COALESCE(SUM(t.amount), 0) / @months_elapsed AS monthly_average
+                COALESCE(SUM(t.amount), 0) / @months_count AS monthly_average
          FROM public.categories c
          LEFT JOIN public.subcategories sc ON sc.category_id = c.category_id
          LEFT JOIN public.transactions t
            ON t.subcategory_id = sc.subcategory_id
           AND EXTRACT(YEAR FROM t.transaction_date) = @year
-          AND EXTRACT(MONTH FROM t.transaction_date) <= @months_elapsed
+          AND EXTRACT(MONTH FROM t.transaction_date) >= @start_month
+          AND EXTRACT(MONTH FROM t.transaction_date) <= @end_month
          GROUP BY c.category_id, c.name, c.display_order
          ORDER BY total DESC, c.display_order`
       : `SELECT c.category_id, c.name AS category,
                 COALESCE(SUM(t.amount), 0) AS total,
-                COALESCE(SUM(t.amount), 0) / @months_elapsed AS monthly_average
+                COALESCE(SUM(t.amount), 0) / @months_count AS monthly_average
          FROM dbo.categories c
          LEFT JOIN dbo.subcategories sc ON sc.category_id = c.category_id
          LEFT JOIN dbo.transactions t
            ON t.subcategory_id = sc.subcategory_id
           AND YEAR(t.transaction_date) = @year
-          AND MONTH(t.transaction_date) <= @months_elapsed
+          AND MONTH(t.transaction_date) >= @start_month
+          AND MONTH(t.transaction_date) <= @end_month
          GROUP BY c.category_id, c.name, c.display_order
          ORDER BY total DESC, c.display_order`;
 
@@ -1448,14 +1552,17 @@ app.get("/summary/ytd", async (req, res) => {
              SELECT EXTRACT(MONTH FROM transaction_date) AS month, SUM(amount) AS actual
              FROM public.transactions
              WHERE EXTRACT(YEAR FROM transaction_date) = @year
-               AND EXTRACT(MONTH FROM transaction_date) <= @months_elapsed
+               AND EXTRACT(MONTH FROM transaction_date) >= @start_month
+               AND EXTRACT(MONTH FROM transaction_date) <= @end_month
              GROUP BY EXTRACT(MONTH FROM transaction_date)
            ),
            plans AS (
              SELECT bp.month, SUM(bl.projected_amount) AS planned
              FROM public.budget_periods bp
              JOIN public.budget_lines bl ON bl.period_id = bp.period_id
-             WHERE bp.year = @year AND bp.month <= @months_elapsed
+             WHERE bp.year = @year
+               AND bp.month >= @start_month
+               AND bp.month <= @end_month
              GROUP BY bp.month
            )
          SELECT m.month,
@@ -1471,14 +1578,17 @@ app.get("/summary/ytd", async (req, res) => {
              SELECT MONTH(transaction_date) AS month, SUM(amount) AS actual
              FROM dbo.transactions
              WHERE YEAR(transaction_date) = @year
-               AND MONTH(transaction_date) <= @months_elapsed
+               AND MONTH(transaction_date) >= @start_month
+               AND MONTH(transaction_date) <= @end_month
              GROUP BY MONTH(transaction_date)
            ),
            plans AS (
              SELECT bp.month, SUM(bl.projected_amount) AS planned
              FROM dbo.budget_periods bp
              JOIN dbo.budget_lines bl ON bl.period_id = bp.period_id
-             WHERE bp.year = @year AND bp.month <= @months_elapsed
+             WHERE bp.year = @year
+               AND bp.month >= @start_month
+               AND bp.month <= @end_month
              GROUP BY bp.month
            )
          SELECT m.month,
@@ -1490,7 +1600,12 @@ app.get("/summary/ytd", async (req, res) => {
          LEFT JOIN actuals a ON a.month = m.month
          ORDER BY m.month`;
 
-    const params = { year: requestedYear, months_elapsed: monthsElapsed };
+    const params = {
+      year: requestedYear,
+      start_month: trackedRange.startMonth,
+      end_month: trackedRange.endMonth,
+      months_count: trackedRange.months.length,
+    };
     const [categoryAverages, monthlyVariance] = await Promise.all([
       query(categoryQuery, params),
       query(varianceQuery, params),
@@ -1498,7 +1613,7 @@ app.get("/summary/ytd", async (req, res) => {
 
     res.json({
       year: requestedYear,
-      months_elapsed: monthsElapsed,
+      months_elapsed: trackedRange.months.length,
       category_averages: categoryAverages,
       monthly_variance: monthlyVariance,
     });
@@ -1507,6 +1622,28 @@ app.get("/summary/ytd", async (req, res) => {
     res.status(500).json({ error: "Failed to fetch YTD summary" });
   }
 });
+
+function getTrackedMonthRangeForYear(year) {
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth() + 1;
+  if (year < INCOME_TRACKING_START_YEAR || year > currentYear) {
+    return null;
+  }
+
+  const startMonth = year === INCOME_TRACKING_START_YEAR ? INCOME_TRACKING_START_MONTH : 1;
+  const endMonth = year === currentYear ? currentMonth : 12;
+  if (endMonth < startMonth) {
+    return null;
+  }
+
+  const months = Array.from({ length: endMonth - startMonth + 1 }, (_, index) => startMonth + index);
+  return {
+    startMonth,
+    endMonth,
+    months,
+  };
+}
 
 app.get("/summary/categories", async (req, res) => {
   try {

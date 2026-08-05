@@ -1,13 +1,14 @@
 param(
-    [switch]$ValidateOnly
+    [switch]$ValidateOnly,
+    [switch]$ClearCache
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
-$PiTarget = 'pstrzelbicki@192.168.2.107'
-$PiAddress = '192.168.2.107'
+$PiTarget = 'pstrzelbicki@192.168.2.108'
+$PiAddress = '192.168.2.108'
 $SourceArchive = Join-Path $env:TEMP 'homebudget-source.tar.gz'
 $WebArchive = Join-Path $env:TEMP 'homebudget-web.tar.gz'
 
@@ -33,7 +34,11 @@ try {
     Assert-NativeSuccess 'Backend syntax validation'
 
     Write-Host 'Building static Expo web routes...'
-    & npx.cmd expo export --platform web --clear
+    if ($ClearCache) {
+        & npx.cmd expo export --platform web --clear
+    } else {
+        & npx.cmd expo export --platform web
+    }
     Assert-NativeSuccess 'Expo web export'
 
     if ($ValidateOnly) {

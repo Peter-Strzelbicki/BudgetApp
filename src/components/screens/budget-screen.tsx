@@ -2,10 +2,11 @@ import { Copy, Pencil, Plus, Save, Trash2, X } from 'lucide-react-native';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 
+import { AnimatedHorizontalBar } from '@/components/animated-bar';
 import { ErrorNotice, formatCurrency, MonthSwitcher, moveMonth, Page, PageHeading, Panel, SectionHeader, StatCard } from '@/components/budget-ui';
 import { ContributionPanel } from '@/components/contribution-panel';
-import { PaycheckPanel } from '@/components/paycheck-panel';
 import { BudgetLine, Category, ContributionSummary, createSubcategory, deleteSubcategory, getBudgetLines, getCategories, getContributionSummary, saveBudgetLine } from '@/constants/api';
+import { TRACKING_START_MONTH, TRACKING_START_YEAR } from '@/constants/tracking-period';
 import { BudgetColors, Fonts } from '@/constants/theme';
 
 export default function BudgetScreen() {
@@ -54,12 +55,12 @@ export default function BudgetScreen() {
 
   const changeMonth = (offset: number) => {
     const next = moveMonth(month, year, offset);
+    const now = new Date();
+    const afterCurrentMonth = next.year > now.getFullYear() || (next.year === now.getFullYear() && next.month > now.getMonth() + 1);
+    const beforeTrackingStart = next.year < TRACKING_START_YEAR || (next.year === TRACKING_START_YEAR && next.month < TRACKING_START_MONTH);
+    if (afterCurrentMonth || beforeTrackingStart) return;
     setMonth(next.month);
     setYear(next.year);
-  };
-
-  const refreshContribution = async () => {
-    setContribution(await getContributionSummary(month, year));
   };
 
   const saveAll = async () => {
@@ -74,11 +75,6 @@ export default function BudgetScreen() {
       await Promise.all(changed.map(line => saveBudgetLine(line.subcategory_id, month, year, Number(drafts[line.subcategory_id] || 0))));
       setLines(current => current.map(line => ({ ...line, projected_amount: Number(drafts[line.subcategory_id] || 0) })));
       setNotice(`${changed.length} budget line${changed.length === 1 ? '' : 's'} saved.`);
-      try {
-        await refreshContribution();
-      } catch {
-        setError('The budget was saved, but transfer totals could not be refreshed.');
-      }
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'The budget could not be saved.');
     } finally {
@@ -176,7 +172,6 @@ export default function BudgetScreen() {
         <StatCard label={remaining >= 0 ? 'Remaining' : 'Over plan'} value={formatCurrency(Math.abs(remaining))} detail={planned > 0 ? `${Math.round(actual / planned * 100)}% used` : 'Enter a plan below'} accent={remaining >= 0 ? BudgetColors.gold : BudgetColors.coral} />
       </View>
       <ContributionPanel summary={contribution} style={styles.contributionPanel} />
-      <PaycheckPanel month={month} year={year} onChanged={refreshContribution} />
       <View style={styles.toolbar}>
         <Pressable onPress={copyPrevious} style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}>
           <Copy color={BudgetColors.ink} size={16} /><Text style={styles.secondaryText}>Copy previous</Text>
@@ -203,6 +198,7 @@ export default function BudgetScreen() {
           {categoryLines.map((line, index) => {
             const linePlan = Number(drafts[line.subcategory_id] || 0);
             const percent = linePlan > 0 ? line.actual_amount / linePlan * 100 : line.actual_amount > 0 ? 100 : 0;
+            const overBudget = linePlan > 0 ? line.actual_amount > linePlan : line.actual_amount > 0;
             const isDeleting = deletingId === line.subcategory_id;
             return <View key={line.subcategory_id} style={[styles.line, compact && styles.lineCompact, index === 0 && styles.lineFirst]}>
               {managing && (
@@ -218,8 +214,8 @@ export default function BudgetScreen() {
               )}
               <View style={styles.lineCopy}>
                 <Text style={styles.lineName}>{line.subcategory}</Text>
-                {!managing && <Text style={[styles.lineActual, percent > 100 && styles.over]}>{formatCurrency(line.actual_amount, 2)} spent</Text>}
-                {!managing && <View style={styles.progress}><View style={[styles.progressFill, percent > 100 && styles.progressOver, { width: `${Math.min(percent, 100)}%` }]} /></View>}
+                {!managing && <Text style={[styles.lineActual, overBudget && styles.over]}>{formatCurrency(line.actual_amount, 2)} spent{overBudget ? ' • Over budget' : ''}</Text>}
+                {!managing && <View style={styles.progress}><AnimatedHorizontalBar delay={index * 25} percent={percent} style={[styles.progressFill, overBudget && styles.progressOver]} /></View>}
               </View>
               {!managing && (
                 <View style={styles.inputWrap}>

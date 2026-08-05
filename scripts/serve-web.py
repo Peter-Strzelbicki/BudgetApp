@@ -5,6 +5,16 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 
 class ExpoStaticHandler(SimpleHTTPRequestHandler):
+    def end_headers(self):
+        request_path = self.path.split("?", 1)[0]
+        if request_path.startswith("/_expo/static/"):
+            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+        elif request_path.endswith(".html") or "." not in os.path.basename(request_path):
+            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
+        super().end_headers()
+
     def send_head(self):
         translated_path = self.translate_path(self.path)
         if not os.path.exists(translated_path) and not translated_path.endswith(os.sep):

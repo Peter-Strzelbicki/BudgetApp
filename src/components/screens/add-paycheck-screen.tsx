@@ -2,9 +2,11 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 
+import { AnimatedHorizontalBar } from '@/components/animated-bar';
 import { EmptyState, ErrorNotice, formatCurrency, MonthSwitcher, moveMonth, Page, PageHeading, Panel, SectionHeader } from '@/components/budget-ui';
 import { DateInput } from '@/components/date-input';
 import { addExtraIncome, addJointPayment, ContributionSummary, deleteExtraIncome, deleteJointPayment, ExtraIncome, getContributionSummary, getExtraIncome, getIncomeConfig, getIncomeSummary, getJointPayments, IncomeConfig, IncomeMonthSummary, JointPayment, saveIncomeConfig } from '@/constants/api';
+import { TRACKING_START_MONTH, TRACKING_START_YEAR } from '@/constants/tracking-period';
 import { BudgetColors, Fonts } from '@/constants/theme';
 
 export default function AddPaycheckScreen() {
@@ -73,6 +75,10 @@ export default function AddPaycheckScreen() {
 
   const changeMonth = (offset: number) => {
     const next = moveMonth(month, year, offset);
+    const now = new Date();
+    const afterCurrentMonth = next.year > now.getFullYear() || (next.year === now.getFullYear() && next.month > now.getMonth() + 1);
+    const beforeTrackingStart = next.year < TRACKING_START_YEAR || (next.year === TRACKING_START_YEAR && next.month < TRACKING_START_MONTH);
+    if (afterCurrentMonth || beforeTrackingStart) return;
     setMonth(next.month);
     setYear(next.year);
   };
@@ -107,8 +113,8 @@ export default function AddPaycheckScreen() {
 
   const addPayment = async () => {
     const amount = Number(paymentAmount);
-    if (!selectedPerson || !Number.isFinite(amount) || amount <= 0 || !isValidDate(paymentDate)) {
-      setError('Choose a person and enter a positive amount and valid payment date.');
+    if (!selectedPerson || !Number.isFinite(amount) || amount === 0 || !isValidDate(paymentDate)) {
+      setError('Choose a person and enter a non-zero amount and valid payment date.');
       return;
     }
     setAddingPayment(true);
@@ -145,7 +151,7 @@ export default function AddPaycheckScreen() {
   };
 
   const useRemainingBalance = () => {
-    const balance = contribution?.people.find(person => person.person_id === selectedPerson)?.remaining_due || 0;
+    const balance = contribution?.people.find(person => person.person_id === selectedPerson)?.transfer_due || 0;
     setPaymentAmount(balance > 0 ? balance.toFixed(2) : '');
   };
 
@@ -254,22 +260,22 @@ export default function AddPaycheckScreen() {
       </Panel>
 
       <Panel>
-        <SectionHeader title={`${year} income by month`} detail="Extra income is included in totals but does not change joint-account shares." />
+        <SectionHeader title={`${year} income by month`} detail={`Tracking starts ${INCOME_TRACKING_START_LABEL}. Extra income is included in totals but does not change joint-account shares.`} />
         {incomeSummaryLoading ? <View style={styles.loader}><ActivityIndicator color={BudgetColors.green} /></View> : (
-          <View style={styles.incomeChart}>
+          incomeSummary.length === 0 ? <EmptyState title="No tracked income for this year" detail={`Income history starts in ${INCOME_TRACKING_START_LABEL}.`} /> : <View style={styles.incomeChart}>
             <View style={styles.incomeChartLegend}>
               <View style={styles.legendItem}><View style={[styles.legendSwatch, styles.incomeBarRegular]} /><Text style={styles.legendText}>Regular</Text></View>
               <View style={styles.legendItem}><View style={[styles.legendSwatch, styles.incomeBarExtra]} /><Text style={styles.legendText}>Extra</Text></View>
             </View>
-            {incomeSummary.map(row => (
+            {incomeSummary.map((row, index) => (
               <View key={row.month} style={[styles.incomeMonthRow, row.month === month && styles.incomeMonthRowSelected]}>
                 <View style={styles.incomeMonthCopy}>
                   <Text style={styles.incomeMonthName}>{MONTH_SHORT[row.month - 1]}</Text>
                 </View>
                 <View style={styles.incomeBarWrap}>
                   <View style={styles.incomeBarTrack}>
-                    <View style={[styles.incomeBarRegular, { width: `${Math.max(row.regular_income / incomeMax * 100, 0)}%` }]} />
-                    <View style={[styles.incomeBarExtra, { width: `${Math.max(row.extra_income / incomeMax * 100, 0)}%` }]} />
+                    <AnimatedHorizontalBar delay={index * 35} percent={row.regular_income / incomeMax * 100} style={styles.incomeBarRegular} />
+                    <AnimatedHorizontalBar delay={index * 35 + 70} percent={row.extra_income / incomeMax * 100} style={styles.incomeBarExtra} />
                   </View>
                   {compact && <Text style={styles.incomeMonthDetail}>Regular {formatCurrency(row.regular_income, 2)} · Extra {formatCurrency(row.extra_income, 2)}</Text>}
                 </View>
@@ -290,21 +296,28 @@ export default function AddPaycheckScreen() {
         />
         {contribution && (
           <View style={styles.balanceGrid}>
-            {contribution.people.map(person => (
-              <View key={person.person_id} style={styles.balanceItem}>
-                <View style={styles.balanceCopy}>
-                  <Text style={styles.name}>{person.name}</Text>
-                  <Text style={styles.detail}>
-                    {person.installments_due} of {contribution.pay_periods} paydays reached
-                    {person.next_pay_date ? ` - next ${formatShortDate(person.next_pay_date)}` : ''}
-                  </Text>
+            {contribution.people.map(person => {
+              const ahead = person.credit > 0;
+              return (
+                <View key={person.person_id} style={styles.balanceItem}>
+                  <View style={styles.balanceCopy}>
+                    <Text style={styles.name}>{person.name}</Text>
+                    <Text style={styles.detail}>
+                      {formatCurrency(person.biweekly_share, 2)} biweekly target
+                      {person.next_pay_date ? ` - next ${formatShortDate(person.next_pay_date)}` : ''}
+                    </Text>
+                  </View>
+                  <View style={styles.balanceAmountCopy}>
+                    <Text style={[styles.balanceAmount, ahead && styles.balanceAmountAhead]}>
+                      {formatCurrency(ahead ? person.credit : person.transfer_due, 2)}
+                    </Text>
+                    <Text style={[styles.balanceLabel, ahead && styles.balanceLabelAhead]}>
+                      {ahead ? 'ahead' : person.next_pay_date ? 'due next payday' : person.transfer_due > 0 ? 'owed now' : 'caught up'}
+                    </Text>
+                  </View>
                 </View>
-                <View style={styles.balanceAmountCopy}>
-                  <Text style={styles.balanceAmount}>{formatCurrency(person.remaining_due, 2)}</Text>
-                  <Text style={styles.balanceLabel}>owed now</Text>
-                </View>
-              </View>
-            ))}
+              );
+            })}
           </View>
         )}
         <View style={styles.paymentForm}>
@@ -318,7 +331,7 @@ export default function AddPaycheckScreen() {
           <View style={styles.paymentFields}>
             <View style={styles.inputWrap}>
               <Text style={styles.dollar}>$</Text>
-              <TextInput value={paymentAmount} onChangeText={value => setPaymentAmount(value.replace(/[^0-9.]/g, ''))} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor={BudgetColors.faint} style={styles.input} />
+              <TextInput value={paymentAmount} onChangeText={value => setPaymentAmount(sanitizeSignedAmountInput(value))} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor={BudgetColors.faint} style={styles.input} />
             </View>
             <Pressable onPress={useRemainingBalance} style={({ pressed }) => [styles.balanceButton, pressed && styles.pressed]}>
               <ArrowDownToLine color={BudgetColors.green} size={15} />
@@ -387,6 +400,9 @@ export default function AddPaycheckScreen() {
 
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const MONTH_SHORT = MONTH_NAMES.map(name => name.slice(0, 3));
+const INCOME_TRACKING_START_MONTH = 5;
+const INCOME_TRACKING_START_YEAR = 2025;
+const INCOME_TRACKING_START_LABEL = `${MONTH_NAMES[INCOME_TRACKING_START_MONTH - 1]} ${INCOME_TRACKING_START_YEAR}`;
 
 function defaultDate(month: number, year: number) {
   const today = new Date();
@@ -400,6 +416,15 @@ function isValidDate(value: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const parsed = new Date(`${value}T00:00:00Z`);
   return !Number.isNaN(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function sanitizeSignedAmountInput(value: string) {
+  const normalized = value.replace(/[^0-9.-]/g, '');
+  const hasLeadingMinus = normalized.startsWith('-');
+  const unsigned = normalized.replace(/-/g, '');
+  const [wholePart, ...decimalParts] = unsigned.split('.');
+  const decimalPart = decimalParts.join('');
+  return `${hasLeadingMinus ? '-' : ''}${wholePart}${decimalParts.length > 0 ? `.${decimalPart}` : ''}`;
 }
 
 function formatShortDate(value: string) {
@@ -466,7 +491,9 @@ const styles = StyleSheet.create({
   balanceCopy: { flex: 1, minWidth: 0, gap: 3 },
   balanceAmountCopy: { alignItems: 'flex-end', gap: 2 },
   balanceAmount: { color: BudgetColors.ink, fontFamily: Fonts.serif, fontSize: 20, fontWeight: '700' },
+  balanceAmountAhead: { color: BudgetColors.green },
   balanceLabel: { color: BudgetColors.faint, fontFamily: Fonts.sans, fontSize: 9, fontWeight: '800', textTransform: 'uppercase' },
+  balanceLabelAhead: { color: BudgetColors.green },
   paymentForm: { marginVertical: 18 },
   paymentFields: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   paymentDate: { flex: 1, minWidth: 180 },

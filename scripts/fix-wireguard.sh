@@ -35,7 +35,7 @@ echo "=== SCAN THIS QR CODE IN THE WIREGUARD APP ON YOUR PHONE ==="
 qrencode -t ansiutf8 < /tmp/phone.conf
 echo ""
 echo "============================================================"
-echo "  Next step: forward UDP port 51820 to 192.168.2.107"
+echo "  Next step: forward UDP port 51820 to 192.168.2.108"
 echo "  in your router settings."
 echo "  App URL on VPN: http://homebudget"
 echo "============================================================"

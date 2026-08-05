@@ -5,7 +5,9 @@ const DEFAULT_API_URL = Platform.select({
   android: 'http://10.0.2.2:3000',
   default:
     typeof window !== 'undefined'
-      ? `${window.location.protocol}//${window.location.hostname}:3000`
+      ? window.location.port === '8081'
+        ? `${window.location.protocol}//${window.location.hostname}:3000`
+        : `${window.location.origin}/api`
       : 'http://localhost:3000',
 });
 
@@ -79,7 +81,9 @@ interface ContributionPerson {
   income: number;
   income_percentage: number;
   monthly_share: number;
+  biweekly_share: number;
   accrued_share: number;
+  next_payday_share: number;
   paid_personally: number;
   transferred_to_joint: number;
   remaining_due: number;
@@ -88,8 +92,20 @@ interface ContributionPerson {
   remaining_pay_periods: number;
   scheduled_pay_dates: string[];
   next_pay_date: string | null;
+  last_joint_payment_date: string | null;
+  last_joint_payment_at: string | null;
+  included_expense_count: number;
+  included_expenses: IncludedExpense[];
   transfer_due: number;
   credit: number;
+}
+
+interface IncludedExpense {
+  transaction_date: string | null;
+  amount: number;
+  category: string | null;
+  subcategory: string | null;
+  location: string | null;
 }
 
 export interface JointPayment {
@@ -434,8 +450,22 @@ export async function deleteTransaction(transactionId: number) {
   });
 }
 
+const REFERENCE_CACHE_TTL_MS = 5 * 60 * 1000;
+const referenceCache = new Map<string, { expiresAt: number; promise: Promise<unknown> }>();
+
+function getCachedReferenceData<T>(key: string, loader: () => Promise<T>): Promise<T> {
+  const cached = referenceCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.promise as Promise<T>;
+  const promise = loader().catch(error => {
+    referenceCache.delete(key);
+    throw error;
+  });
+  referenceCache.set(key, { expiresAt: Date.now() + REFERENCE_CACHE_TTL_MS, promise });
+  return promise;
+}
+
 export function getCategories() {
-  return requestJson<Category[]>('/categories');
+  return getCachedReferenceData('categories', () => requestJson<Category[]>('/categories'));
 }
 
 export async function getSubcategories(categoryId?: number): Promise<Subcategory[]> {
@@ -454,7 +484,7 @@ export function deleteSubcategory(subcategoryId: number) {
   return requestJson<{ subcategory_id: number }>(`/subcategories/${subcategoryId}`, { method: 'DELETE' }, 1);
 }
 export function getPeople() {
-  return requestJson<Person[]>('/people');
+  return getCachedReferenceData('people', () => requestJson<Person[]>('/people'));
 }
 
 export async function getPaychecks(month: number, year: number): Promise<Paycheck[]> {
@@ -522,18 +552,30 @@ export async function getContributionSummary(month: number, year: number): Promi
     planned_expenses: number | string;
     pay_periods: number | string;
     as_of_date: string;
-    people: (Omit<ContributionPerson, 'biweekly_amount' | 'income' | 'income_percentage' | 'monthly_share' | 'accrued_share' | 'paid_personally' | 'transferred_to_joint' | 'remaining_due' | 'monthly_remaining' | 'installments_due' | 'remaining_pay_periods' | 'transfer_due' | 'credit'> & {
+    people: (Omit<ContributionPerson, 'biweekly_amount' | 'income' | 'income_percentage' | 'monthly_share' | 'biweekly_share' | 'accrued_share' | 'next_payday_share' | 'paid_personally' | 'included_expense_count' | 'included_expenses' | 'transferred_to_joint' | 'remaining_due' | 'monthly_remaining' | 'installments_due' | 'remaining_pay_periods' | 'transfer_due' | 'credit'> & {
       biweekly_amount: number | string;
       income: number | string;
       income_percentage: number | string;
       monthly_share: number | string;
+      biweekly_share: number | string;
       accrued_share: number | string;
+      next_payday_share: number | string;
       paid_personally: number | string;
+      included_expense_count: number | string;
+      included_expenses?: {
+        transaction_date: string | null;
+        amount: number | string;
+        category: string | null;
+        subcategory: string | null;
+        location: string | null;
+      }[];
       transferred_to_joint: number | string;
       remaining_due: number | string;
       monthly_remaining: number | string;
       installments_due: number | string;
       remaining_pay_periods: number | string;
+      last_joint_payment_date: string | null;
+      last_joint_payment_at: string | null;
       transfer_due: number | string;
       credit: number | string;
     })[];
@@ -552,13 +594,25 @@ export async function getContributionSummary(month: number, year: number): Promi
       income: Number(person.income),
       income_percentage: Number(person.income_percentage),
       monthly_share: Number(person.monthly_share),
+      biweekly_share: Number((person as { biweekly_share?: number | string }).biweekly_share ?? Number(person.monthly_share) / Number(result.pay_periods)),
       accrued_share: Number((person as { accrued_share?: number | string }).accrued_share ?? 0),
+      next_payday_share: Number((person as { next_payday_share?: number | string }).next_payday_share ?? 0),
       paid_personally: Number(person.paid_personally),
+      included_expense_count: Number((person as { included_expense_count?: number | string }).included_expense_count ?? 0),
+      included_expenses: ((person as { included_expenses?: { transaction_date: string | null; amount: number | string; category: string | null; subcategory: string | null; location: string | null }[] }).included_expenses ?? []).map(expense => ({
+        transaction_date: expense.transaction_date,
+        amount: Number(expense.amount),
+        category: expense.category,
+        subcategory: expense.subcategory,
+        location: expense.location,
+      })),
       transferred_to_joint: Number((person as { transferred_to_joint?: number | string }).transferred_to_joint ?? 0),
       remaining_due: Number((person as { remaining_due?: number | string }).remaining_due ?? 0),
       monthly_remaining: Number((person as { monthly_remaining?: number | string }).monthly_remaining ?? 0),
       installments_due: Number((person as { installments_due?: number | string }).installments_due ?? 0),
       remaining_pay_periods: Number((person as { remaining_pay_periods?: number | string }).remaining_pay_periods ?? 0),
+      last_joint_payment_date: (person as { last_joint_payment_date?: string | null }).last_joint_payment_date ?? null,
+      last_joint_payment_at: (person as { last_joint_payment_at?: string | null }).last_joint_payment_at ?? null,
       transfer_due: Number(person.transfer_due),
       credit: Number(person.credit),
     })),

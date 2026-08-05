@@ -1,9 +1,9 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react-native';
 import { ReactElement, ReactNode } from 'react';
+import Animated, { Easing, FadeIn, FadeInDown, FadeInUp, ReduceMotion } from 'react-native-reanimated';
 import {
     Pressable,
     RefreshControlProps,
-    ScrollView,
     StyleProp,
     StyleSheet,
     Text,
@@ -14,18 +14,26 @@ import {
 
 import { BudgetColors, Fonts, MaxContentWidth } from '@/constants/theme';
 
+const easeOut = Easing.out(Easing.cubic);
+const pageEntrance = FadeIn.duration(220).easing(easeOut).reduceMotion(ReduceMotion.System);
+const headingEntrance = FadeInDown.duration(340).delay(30).easing(easeOut).reduceMotion(ReduceMotion.System);
+const panelEntrance = FadeInUp.duration(380).delay(70).easing(easeOut).reduceMotion(ReduceMotion.System);
+const statEntrance = FadeInUp.duration(360).delay(110).easing(easeOut).reduceMotion(ReduceMotion.System);
+const noticeEntrance = FadeIn.duration(240).delay(40).easing(easeOut).reduceMotion(ReduceMotion.System);
+
 export function Page({ children, refreshControl }: {
   children: ReactNode;
   refreshControl?: ReactElement<RefreshControlProps>;
 }) {
   const { width } = useWindowDimensions();
   return (
-    <ScrollView
+    <Animated.ScrollView
+      entering={pageEntrance}
       style={styles.page}
       contentContainerStyle={[styles.pageContent, width < 700 && styles.pageContentCompact]}
       refreshControl={refreshControl}>
       {children}
-    </ScrollView>
+    </Animated.ScrollView>
   );
 }
 
@@ -36,19 +44,19 @@ export function PageHeading({ eyebrow, title, description, action }: {
   action?: ReactNode;
 }) {
   return (
-    <View style={styles.headingRow}>
+    <Animated.View entering={headingEntrance} style={styles.headingRow}>
       <View style={styles.headingCopy}>
         {eyebrow && <Text style={styles.eyebrow}>{eyebrow}</Text>}
         <Text style={styles.heading}>{title}</Text>
         {description && <Text style={styles.description}>{description}</Text>}
       </View>
       {action}
-    </View>
+    </Animated.View>
   );
 }
 
 export function Panel({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
-  return <View style={[styles.panel, style]}>{children}</View>;
+  return <Animated.View entering={panelEntrance} style={[styles.panel, style]}>{children}</Animated.View>;
 }
 
 export function SectionHeader({ title, detail, action }: {
@@ -75,7 +83,7 @@ export function StatCard({ label, value, detail, accent = BudgetColors.green, ic
   icon?: ReactNode;
 }) {
   return (
-    <View style={styles.statCard}>
+    <Animated.View entering={statEntrance} style={styles.statCard}>
       <View style={styles.statTop}>
         <View style={[styles.statAccent, { backgroundColor: accent }]} />
         {icon}
@@ -83,13 +91,13 @@ export function StatCard({ label, value, detail, accent = BudgetColors.green, ic
       <Text style={styles.statLabel}>{label}</Text>
       <Text style={styles.statValue}>{value}</Text>
       {detail && <Text style={styles.statDetail}>{detail}</Text>}
-    </View>
+    </Animated.View>
   );
 }
 
 export function ErrorNotice({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
-    <View style={styles.errorNotice}>
+    <Animated.View entering={noticeEntrance} style={styles.errorNotice}>
       <View style={styles.errorCopy}>
         <Text style={styles.errorTitle}>Could not load this data</Text>
         <Text style={styles.errorMessage}>{message}</Text>
@@ -99,16 +107,16 @@ export function ErrorNotice({ message, onRetry }: { message: string; onRetry?: (
           <Text style={styles.retryText}>Try again</Text>
         </Pressable>
       )}
-    </View>
+    </Animated.View>
   );
 }
 
 export function EmptyState({ title, detail }: { title: string; detail: string }) {
   return (
-    <View style={styles.emptyState}>
+    <Animated.View entering={noticeEntrance} style={styles.emptyState}>
       <Text style={styles.emptyTitle}>{title}</Text>
       <Text style={styles.emptyDetail}>{detail}</Text>
-    </View>
+    </Animated.View>
   );
 }
 

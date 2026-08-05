@@ -8,6 +8,8 @@ import {
     LayoutDashboard,
     Menu,
     Moon,
+    PawPrint,
+    PiggyBank,
     Plus,
     ReceiptText,
     Repeat,
@@ -17,16 +19,27 @@ import {
     WalletCards,
     X,
 } from 'lucide-react-native';
-  import { ReactNode, useEffect, useState } from 'react';
+  import { Image } from 'expo-image';
+  import { ReactNode, useEffect, useRef, useState } from 'react';
   import { Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import Animated, { Easing, FadeInDown, ReduceMotion, ZoomIn } from 'react-native-reanimated';
 
 import { BudgetColors, Fonts, MaxContentWidth } from '@/constants/theme';
 import { useBudgetTheme } from '@/hooks/use-budget-theme';
+
+const headerEntrance = FadeInDown.duration(300)
+  .easing(Easing.out(Easing.cubic))
+  .reduceMotion(ReduceMotion.System);
+const brandEntrance = ZoomIn.duration(360)
+  .delay(80)
+  .easing(Easing.out(Easing.back(1.25)))
+  .reduceMotion(ReduceMotion.System);
 
 const navItems = [
   { label: 'Overview', href: '/' as Href, icon: LayoutDashboard },
   { label: 'Transactions', href: '/transactions' as Href, icon: ReceiptText },
   { label: 'Budget', href: '/budget' as Href, icon: WalletCards },
+  { label: 'Savings', href: '/savings' as Href, icon: PiggyBank },
   { label: 'Insights', href: '/explore' as Href, icon: ChartNoAxesColumnIncreasing },
   { label: 'Goals', href: '/goals' as Href, icon: Target },
   { label: 'Recurring', href: '/recurring' as Href, icon: Repeat },
@@ -41,45 +54,68 @@ export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { width } = useWindowDimensions();
   const compact = width < 1040;
+  const desktopCollapsedNav = !compact && width < 1380;
+  const narrowHeader = width < 360;
   const [menuOpen, setMenuOpen] = useState(false);
+  const [showDogEgg, setShowDogEgg] = useState(false);
   const { mode, toggle: toggleTheme } = useBudgetTheme();
+  const desktopPrimaryNavItems = desktopCollapsedNav ? navItems.slice(0, 4) : navItems;
+  const brandTapCount = useRef(0);
+  const brandTapResetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     setMenuOpen(false);
   }, [pathname, compact]);
+
+  useEffect(() => () => {
+    if (brandTapResetTimer.current) clearTimeout(brandTapResetTimer.current);
+  }, []);
 
   const navigate = (href: Href) => {
     setMenuOpen(false);
     router.navigate(href);
   };
 
+  const handleBrandPress = () => {
+    // five quick taps on the logo reveals a hidden easter egg
+    brandTapCount.current += 1;
+    if (brandTapResetTimer.current) clearTimeout(brandTapResetTimer.current);
+    if (brandTapCount.current >= 5) {
+      brandTapCount.current = 0;
+      setShowDogEgg(true);
+    } else {
+      brandTapResetTimer.current = setTimeout(() => { brandTapCount.current = 0; }, 2000);
+    }
+    navigate('/');
+  };
+
   return (
     <View style={styles.app}>
-      <View style={styles.header}>
+      <Animated.View entering={headerEntrance} style={styles.header}>
         <View style={[styles.headerInner, compact && styles.headerInnerCompact]}>
           <Pressable
             accessibilityRole="link"
             accessibilityLabel="Go to overview"
-            onPress={() => navigate('/')}
-            style={styles.brand}>
-            <View style={styles.brandMark}>
+            onPress={handleBrandPress}
+            style={[styles.brand, narrowHeader && styles.brandNarrow]}>
+            <Animated.View id="budget-brand-mark" entering={brandEntrance} style={[styles.brandMark, narrowHeader && styles.brandMarkNarrow]}>
               <CircleDollarSign color={BudgetColors.surface} size={22} strokeWidth={2.2} />
-            </View>
+            </Animated.View>
             <View>
-              <Text style={styles.brandName}>HomeBudget</Text>
+              <Text style={[styles.brandName, narrowHeader && styles.brandNameNarrow]}>HomeBudget</Text>
               {!compact && <Text style={styles.brandDetail}>Household ledger</Text>}
             </View>
           </Pressable>
 
           {compact ? (
-            <View style={styles.compactActions}>
-              <Pressable
+            <View style={[styles.compactActions, narrowHeader && styles.compactActionsNarrow]}>
+              {!narrowHeader && <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Add paycheck"
                 onPress={() => router.push(ADD_PAYCHECK)}
                 style={({ pressed }) => [styles.compactPaycheckButton, pressed && styles.pressed]}>
                 <DollarSign color={BudgetColors.green} size={19} strokeWidth={2.5} />
-              </Pressable>
+              </Pressable>}
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Add transaction"
@@ -103,7 +139,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 showsHorizontalScrollIndicator={false}
                 style={styles.nav}
                 contentContainerStyle={styles.navContent}>
-                {navItems.map((item) => {
+                {desktopPrimaryNavItems.map((item) => {
                   const active = item.href === '/' ? pathname === '/' : pathname.startsWith(String(item.href));
                   const Icon = item.icon;
 
@@ -127,6 +163,17 @@ export function AppShell({ children }: { children: ReactNode }) {
                     </Pressable>
                   );
                 })}
+                {desktopCollapsedNav && (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Open navigation menu"
+                    accessibilityState={{ expanded: menuOpen }}
+                    onPress={() => setMenuOpen(true)}
+                    style={({ pressed }) => [styles.navItem, styles.navMoreButton, pressed && styles.pressed]}>
+                    <Menu color={BudgetColors.muted} size={17} strokeWidth={2} />
+                    <Text style={styles.navLabel}>More</Text>
+                  </Pressable>
+                )}
               </ScrollView>
 
               <View style={styles.headerActions}>
@@ -169,25 +216,25 @@ export function AppShell({ children }: { children: ReactNode }) {
             </>
           )}
         </View>
-      </View>
+      </Animated.View>
 
       <Modal
         animationType="fade"
         onRequestClose={() => setMenuOpen(false)}
         statusBarTranslucent
         transparent
-        visible={compact && menuOpen}>
-        <View style={styles.menuOverlay}>
+        visible={menuOpen && (compact || desktopCollapsedNav)}>
+        <View style={[styles.menuOverlay, !compact && styles.menuOverlayDesktop]}>
           <Pressable
             accessibilityLabel="Close navigation menu"
             onPress={() => setMenuOpen(false)}
             style={styles.menuScrim}
           />
-          <View style={styles.mobileMenu}>
+          <View style={[styles.mobileMenu, !compact && styles.desktopMenu]}>
             <View style={styles.mobileMenuHeader}>
               <View>
                 <Text style={styles.mobileMenuEyebrow}>HomeBudget</Text>
-                <Text style={styles.mobileMenuTitle}>Menu</Text>
+                <Text style={styles.mobileMenuTitle}>{compact ? 'Menu' : 'More pages'}</Text>
               </View>
               <Pressable
                 accessibilityRole="button"
@@ -264,6 +311,31 @@ export function AppShell({ children }: { children: ReactNode }) {
           </View>
         </View>
       </Modal>
+      <Modal
+        animationType="fade"
+        onRequestClose={() => setShowDogEgg(false)}
+        statusBarTranslucent
+        transparent
+        visible={showDogEgg}>
+        <Pressable style={styles.eggBackdrop} onPress={() => setShowDogEgg(false)}>
+          <Animated.View entering={ZoomIn.duration(320).easing(Easing.out(Easing.back(1.4))).reduceMotion(ReduceMotion.System)}>
+            <Pressable style={styles.eggCard} onPress={() => null}>
+              <Image
+                style={styles.eggPhoto}
+                source={require('@/assets/images/dog-easter-egg.jpg')}
+                contentFit="cover"
+              />
+              <Text style={styles.eggTitle}>Koda?! What are you doing here?</Text>
+              <PawPrint color={BudgetColors.gold} size={18} style={styles.eggPaw} />
+              <Pressable
+                onPress={() => setShowDogEgg(false)}
+                style={({ pressed }) => [styles.eggCloseButton, pressed && styles.pressed]}>
+                <Text style={styles.eggCloseText}>Close</Text>
+              </Pressable>
+            </Pressable>
+          </Animated.View>
+        </Pressable>
+      </Modal>
       <View style={styles.content}>{children}</View>
     </View>
   );
@@ -273,6 +345,69 @@ const styles = StyleSheet.create({
   app: {
     flex: 1,
     backgroundColor: BudgetColors.canvas,
+  },
+  eggBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 24, 36, 0.34)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  eggCard: {
+    width: '100%',
+    maxWidth: 320,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: BudgetColors.line,
+    backgroundColor: BudgetColors.surface,
+    paddingHorizontal: 20,
+    paddingVertical: 22,
+    alignItems: 'center',
+    gap: 8,
+  },
+  eggPhoto: {
+    width: 180,
+    height: 180,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: BudgetColors.line,
+    backgroundColor: BudgetColors.canvas,
+    marginBottom: 6,
+  },
+  eggTitle: {
+    color: BudgetColors.ink,
+    fontFamily: Fonts.sans,
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  eggDetail: {
+    color: BudgetColors.muted,
+    fontFamily: Fonts.sans,
+    fontSize: 13,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  eggPaw: {
+    marginTop: 2,
+    marginBottom: 4,
+    transform: [{ rotate: '18deg' }],
+  },
+  eggCloseButton: {
+    marginTop: 6,
+    minHeight: 36,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: BudgetColors.line,
+    backgroundColor: BudgetColors.canvas,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  eggCloseText: {
+    color: BudgetColors.ink,
+    fontFamily: Fonts.sans,
+    fontSize: 12,
+    fontWeight: '800',
   },
   header: {
     backgroundColor: BudgetColors.surface,
@@ -300,6 +435,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
   },
+  brandNarrow: {
+    gap: 8,
+  },
   brandMark: {
     width: 38,
     height: 38,
@@ -308,11 +446,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: BudgetColors.green,
   },
+  brandMarkNarrow: {
+    width: 34,
+    height: 34,
+  },
   brandName: {
     color: BudgetColors.ink,
     fontFamily: Fonts.serif,
     fontSize: 18,
     fontWeight: '700',
+  },
+  brandNameNarrow: {
+    fontSize: 16,
   },
   brandDetail: {
     color: BudgetColors.muted,
@@ -339,6 +484,10 @@ const styles = StyleSheet.create({
   navItemActive: {
     backgroundColor: BudgetColors.greenSoft,
   },
+  navMoreButton: {
+    borderWidth: 1,
+    borderColor: BudgetColors.line,
+  },
   navLabel: {
     color: BudgetColors.muted,
     fontFamily: Fonts.sans,
@@ -358,6 +507,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+  },
+  compactActionsNarrow: {
+    gap: 6,
   },
   compactAddButton: {
     width: 40,
@@ -421,6 +573,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'flex-end',
   },
+  menuOverlayDesktop: {
+    justifyContent: 'center',
+    alignItems: 'flex-start',
+  },
   menuScrim: {
     ...StyleSheet.absoluteFill,
     backgroundColor: BudgetColors.scrim,
@@ -435,6 +591,23 @@ const styles = StyleSheet.create({
     backgroundColor: BudgetColors.surface,
     borderLeftWidth: 1,
     borderLeftColor: BudgetColors.line,
+  },
+  desktopMenu: {
+    width: 360,
+    maxWidth: '92%',
+    height: 'auto',
+    maxHeight: '78%',
+    marginTop: 78,
+    marginRight: 24,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: BudgetColors.line,
+    borderLeftWidth: 1,
+    shadowColor: '#000000',
+    shadowOpacity: 0.12,
+    shadowRadius: 22,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 10,
   },
   mobileMenuHeader: {
     minHeight: 56,

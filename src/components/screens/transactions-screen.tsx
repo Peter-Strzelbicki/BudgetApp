@@ -3,8 +3,10 @@ import { MapPin, Pencil, Plus, ReceiptText, Repeat, Search, Trash2, UserRound } 
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 
+import { AnimatedHorizontalBar } from '@/components/animated-bar';
 import { EmptyState, ErrorNotice, formatCurrency, MonthSwitcher, moveMonth, Page, PageHeading, Panel, SectionHeader } from '@/components/budget-ui';
-import { applyRecurringTransactions, ContributionSummary, deleteTransaction, getContributionSummary, getPendingRecurring, getTransactions, Transaction } from '@/constants/api';
+import { applyRecurringTransactions, BudgetLine, ContributionSummary, deleteTransaction, getBudgetLines, getContributionSummary, getPendingRecurring, getTransactions, Transaction } from '@/constants/api';
+import { TRACKING_START_MONTH, TRACKING_START_YEAR } from '@/constants/tracking-period';
 import { BudgetColors, Fonts } from '@/constants/theme';
 
 export default function TransactionsScreen() {
@@ -20,19 +22,22 @@ export default function TransactionsScreen() {
   const [pendingRecurring, setPendingRecurring] = useState(0);
   const [applying, setApplying] = useState(false);
   const [contribution, setContribution] = useState<ContributionSummary | null>(null);
+  const [budgetLines, setBudgetLines] = useState<BudgetLine[]>([]);
   const [categoryFilter, setCategoryFilter] = useState('All');
 
   const load = async () => {
     setLoading(true); setError(null);
     try {
-      const [txRows, pending, contributionRows] = await Promise.all([
+      const [txRows, pending, contributionRows, budgetRows] = await Promise.all([
         getTransactions(month, year),
         getPendingRecurring(month, year),
         getContributionSummary(month, year),
+        getBudgetLines(month, year),
       ]);
       setTransactions(txRows);
       setPendingRecurring(pending.pending);
       setContribution(contributionRows);
+      setBudgetLines(budgetRows);
     }
     catch (loadError) { setError(loadError instanceof Error ? loadError.message : 'Transactions could not be loaded.'); }
     finally { setLoading(false); }
@@ -42,6 +47,10 @@ export default function TransactionsScreen() {
 
   const changeMonth = (offset: number) => {
     const next = moveMonth(month, year, offset);
+    const now = new Date();
+    const afterCurrentMonth = next.year > now.getFullYear() || (next.year === now.getFullYear() && next.month > now.getMonth() + 1);
+    const beforeTrackingStart = next.year < TRACKING_START_YEAR || (next.year === TRACKING_START_YEAR && next.month < TRACKING_START_MONTH);
+    if (afterCurrentMonth || beforeTrackingStart) return;
     setMonth(next.month); setYear(next.year);
   };
 
@@ -83,8 +92,19 @@ export default function TransactionsScreen() {
   const filteredTotal = filtered.reduce((sum, transaction) => sum + transaction.amount, 0);
   const total = transactions.reduce((sum, transaction) => sum + transaction.amount, 0);
   const monthlyIncome = contribution?.household_income ?? 0;
-  const incomeRemaining = monthlyIncome - total;
-  const spendPct = monthlyIncome > 0 ? Math.min(total / monthlyIncome * 100, 100) : 0;
+  const graphSpent = categoryFilter === 'All' ? total : filteredTotal;
+  const incomeRemaining = monthlyIncome - graphSpent;
+  const categoryBudget = categoryFilter === 'All'
+    ? null
+    : budgetLines
+      .filter(line => line.category.toLowerCase() === normalizedCategory)
+      .reduce((sum, line) => sum + line.projected_amount, 0);
+  const categoryBudgetVariance = categoryBudget === null ? null : categoryBudget - graphSpent;
+  const isAllCategories = categoryFilter === 'All';
+  const barTarget = isAllCategories ? monthlyIncome : (categoryBudget ?? 0);
+  const barPct = barTarget > 0 ? Math.min(graphSpent / barTarget * 100, 100) : 0;
+  const barOver = barTarget > 0 && graphSpent > barTarget;
+  const showSummaryBar = isAllCategories ? monthlyIncome > 0 : true;
 
   return <Page>
     <PageHeading eyebrow="Ledger" title="Transactions" description="Search, review, and maintain the household spending record." action={<Pressable onPress={() => router.push('/add-transaction')} style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}><Plus color={BudgetColors.surface} size={17} /><Text style={styles.primaryText}>Add transaction</Text></Pressable>} />
@@ -112,22 +132,36 @@ export default function TransactionsScreen() {
         ))}
       </View>
     </View>
-    {monthlyIncome > 0 && (
+    {showSummaryBar && (
       <View style={styles.incomeBarPanel}>
         <View style={styles.incomeBarHeader}>
-          <Text style={styles.incomeBarTitle}>Monthly income</Text>
-          <Text style={styles.incomeBarTotal}>{formatCurrency(monthlyIncome, 2)}</Text>
+          <Text style={styles.incomeBarTitle}>{isAllCategories ? 'Monthly income' : `${categoryFilter} budget`}</Text>
+          <Text style={styles.incomeBarTotal}>{formatCurrency(barTarget, 2)}</Text>
         </View>
         <View style={styles.incomeTrack}>
-          <View style={[styles.incomeFill, { width: `${spendPct}%` }, total > monthlyIncome && styles.incomeFillOver]} />
+          <AnimatedHorizontalBar percent={barPct} style={[styles.incomeFill, barOver && styles.incomeFillOver]} />
         </View>
         <View style={styles.incomeBarFooter}>
-          <Text style={styles.incomeSpent}>{formatCurrency(total, 2)} spent</Text>
-          <Text style={[styles.incomeLeft, incomeRemaining < 0 && styles.incomeOver]}>
-            {incomeRemaining >= 0
-              ? `${formatCurrency(incomeRemaining, 2)} remaining`
-              : `${formatCurrency(Math.abs(incomeRemaining), 2)} over income`}
+          <Text style={styles.incomeSpent}>
+            {categoryFilter === 'All'
+              ? `${formatCurrency(graphSpent, 2)} spent`
+              : `${formatCurrency(graphSpent, 2)} ${categoryFilter} spent`}
           </Text>
+          {isAllCategories ? (
+            <Text style={[styles.incomeLeft, incomeRemaining < 0 && styles.incomeOver]}>
+              {incomeRemaining >= 0
+                ? `${formatCurrency(incomeRemaining, 2)} remaining`
+                : `${formatCurrency(Math.abs(incomeRemaining), 2)} over income`}
+            </Text>
+          ) : (
+            <Text style={[styles.incomeLeft, categoryBudgetVariance !== null && categoryBudgetVariance < 0 && styles.incomeOver]}>
+              {categoryBudget === null
+                ? 'No budget set'
+                : categoryBudgetVariance !== null && categoryBudgetVariance >= 0
+                  ? `${formatCurrency(categoryBudgetVariance, 2)} under ${formatCurrency(categoryBudget, 2)} budget`
+                  : `${formatCurrency(Math.abs(categoryBudgetVariance || 0), 2)} over ${formatCurrency(categoryBudget, 2)} budget`}
+            </Text>
+          )}
         </View>
       </View>
     )}

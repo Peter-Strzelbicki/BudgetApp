@@ -73,6 +73,12 @@ sudo tee /etc/nginx/sites-available/homebudget > /dev/null <<'EOF'
 server {
     listen 80;
     server_name homebudget _;
+  location /api/ {
+    proxy_pass http://127.0.0.1:3000/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
     location / {
         proxy_pass http://127.0.0.1:8081/;
         proxy_set_header Host $host;
@@ -97,7 +103,7 @@ echo "============================================================"
 sudo wg show
 echo ""
 echo "  App address on VPN : http://homebudget or http://$SERVER_VPN_IP"
-echo "  Router step needed : Forward UDP port $WG_PORT to 192.168.2.107"
+echo "  Router step needed : Forward UDP port $WG_PORT to 192.168.2.108"
 echo "============================================================"
 echo ""
 echo "=== SCAN THIS QR CODE IN THE WIREGUARD APP ON YOUR PHONE ==="

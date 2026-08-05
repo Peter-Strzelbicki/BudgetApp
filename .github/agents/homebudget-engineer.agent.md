@@ -18,25 +18,29 @@ The app is used from browsers on the home network and from a phone over WireGuar
 
 - Frontend: Expo SDK 57, Expo Router, React Native, React Native Web, TypeScript.
 - Read the exact versioned Expo documentation at `https://docs.expo.dev/versions/v57.0.0/` before changing Expo behavior.
-- Route files live in `src/app/`. Most active implementations live in `src/components/screens/` and are re-exported by route files.
-- Shared navigation is `src/components/app-shell.tsx`.
+- Route files live in `src/app/`: `index`, `budget`, `transactions`, `add-transaction`, `add-paycheck`, `recurring`, `savings`, `goals`, `explore` (insights), `import`, `settings`. Most active implementations live in `src/components/screens/` (matching `*-screen.tsx` names, e.g. `dashboard-screen.tsx` backs `index.tsx`) and are re-exported by route files.
+- Shared navigation is `src/components/app-shell.tsx`, which also owns the tap-the-logo easter egg (5 taps within 2s opens a photo modal).
 - Shared page primitives are `src/components/budget-ui.tsx`.
-- Theme tokens are `src/constants/theme.ts`; web dark mode uses CSS variables in `src/global.css` and `src/hooks/use-budget-theme.tsx`.
-- API client and shared response types are in `src/constants/api.ts`.
+- Theme tokens are `src/constants/theme.ts`. Dark/light mode is a runtime toggle via `src/hooks/use-budget-theme.tsx` (`useBudgetTheme()` provides `mode`/`toggle`, persisted to `localStorage` on web, applied through `data-theme` + CSS variables in `src/global.css`). The toggle is exposed both in `app-shell.tsx` and in the Settings screen's Appearance panel.
+- API client and shared response types are in `src/constants/api.ts`; reference data (`getCategories`, `getPeople`) is memoized in-process via `getCachedReferenceData` to cut redundant round trips.
 - Backend: CommonJS Express server in `src/server/server.js`.
-- Database: PostgreSQL database `homebudget`, configured only through `src/server/.env` on the Pi.
-- Database schema and seed references are in `src/server/`.
-- XLSX parsing and atomic import logic are in `src/server/import-xlsx.js` and `src/server/import-xlsx-db.js`.
-- Paycheck contribution calculations are in `src/server/contributions.js` with UI in `src/components/paycheck-panel.tsx` and `src/components/contribution-panel.tsx`.
+- Database: PostgreSQL database `homebudget`, configured only through `src/server/.env` on the Pi. Indexes on `paychecks`, `joint_payments`, and `transactions` (date/subcategory/person+date) are bootstrapped idempotently (`CREATE INDEX IF NOT EXISTS`) in `server.js`.
+- Database schema and seed references are in `src/server/home_budget_schema.sql` and `src/server/seed-data.sql`.
+- XLSX parsing and atomic import logic are in `src/server/import-xlsx.js` and `src/server/import-xlsx-db.js` (tested by `import-xlsx.test.js`).
+- Paycheck contribution calculations are in `src/server/contributions.js` (tested by `contributions.test.js`) with UI in `src/components/paycheck-panel.tsx` and `src/components/contribution-panel.tsx`.
+- Historical income-weighting resolution lives in `src/server/income-history.js` (tested by `income-history.test.js`).
+- Automated Postgres backups run via `src/server/budget-backup.service` + `budget-backup.timer` (systemd timer unit) using `scripts/backup-db.sh`.
+- nginx reverse-proxy config for the VPN vhost is `src/server/homebudget-nginx.conf`.
 
 ## Production Environment
 
-- SSH target: `pstrzelbicki@192.168.2.107` using existing SSH key authentication.
+- SSH target: `pstrzelbicki@192.168.2.108` using existing SSH key authentication (this is the verified working address used by `scripts/deploy-pi.ps1`; treat `.108` as authoritative if any doc says `.107`).
 - Project root: `/home/pstrzelbicki/BudgetApp/BudgetApp`.
 - Web service: `expo-app.service`, serving the static `dist/` build on port `8081` through `scripts/serve-web.py`.
 - API service: `budget-api.service`, serving port `3000` and loading `src/server/.env`.
+- Backup: `budget-backup.timer` runs `budget-backup.service` on a schedule against local Postgres.
 - PostgreSQL: local Pi port `5432`; never connect to it from browser code.
-- LAN URL: `http://192.168.2.107:8081`.
+- LAN URL: `http://192.168.2.108:8081`.
 - VPN URL: `http://homebudget` through nginx and WireGuard.
 - WireGuard endpoint uses `sphomebudget.duckdns.org`; never store or print DuckDNS, database, or VPN secrets.
 
@@ -92,6 +96,12 @@ Use `scripts/deploy-pi.ps1 -ValidateOnly` only for testing the workflow itself. 
 
 Do not deploy for analysis-only work, documentation-only changes, agent customization changes, or when the user explicitly opts out.
 
+### Deploy Performance Notes
+
+- `expo export --platform web` runs without `--clear` by default (Metro's content-hash cache is safe to reuse); pass `-ClearCache` to `deploy-pi.ps1` only when troubleshooting a stale bundle. `--clear` was measured to cost ~25s versus a normal export.
+- `scripts/deploy-pi-remote.sh` hashes both `package-lock.json` files and skips both `npm install` calls when the hash matches the last deploy, printing `Dependencies unchanged; skipping npm install.` Only edit dependency files when you intend that reinstall to run.
+- The API health check retry delay is `1`s (not `2`s) to shorten the worst-case restart window.
+
 ## Definition Of Done
 
 - Requested behavior is implemented in the owning code.
@@ -99,3 +109,7 @@ Do not deploy for analysis-only work, documentation-only changes, agent customiz
 - Runtime changes are deployed through `scripts/deploy-pi.ps1`.
 - Live endpoints are healthy after deployment.
 - Final response states what changed, what was validated, and whether deployment succeeded. Never claim completion if deployment was required but failed.
+
+## Keeping This Agent Current
+
+This file is the persistent memory of HomeBudget's architecture and environment across chat sessions. After completing any task that changes the project's structure, routes, server modules, environment details, or deployment behavior, update the relevant section above in the same turn (no separate confirmation needed) so the next session starts with accurate context. Do not deploy solely because this file changed. Keep additions factual and concise; prefer editing the existing bullet over appending duplicate notes.

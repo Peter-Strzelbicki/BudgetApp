@@ -16,31 +16,32 @@ export function DateInput({ value, onChange, placeholder = 'Select a date' }: Da
 
   return (
     <View style={styles.container}>
-      <Text style={[styles.display, !value && styles.placeholder]}>{formatted || placeholder}</Text>
-      {/* The date input is invisible and overlays the calendar icon so clicking the button triggers it */}
-      <View style={styles.iconWrap}>
+      <Text pointerEvents="none" style={[styles.display, !value && styles.placeholder]}>{formatted || placeholder}</Text>
+      <View pointerEvents="none" style={styles.iconWrap}>
         <CalendarDays color={BudgetColors.green} size={19} />
-        <input
-          type="date"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          style={{
-            position: 'absolute',
-            inset: 0,
-            opacity: 0,
-            cursor: 'pointer',
-            width: '100%',
-            height: '100%',
-          }}
-        />
       </View>
+      <input
+        aria-label="Choose date"
+        type="date"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        onClick={(event) => event.currentTarget.showPicker?.()}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          opacity: 0,
+          cursor: 'pointer',
+          width: '100%',
+          height: '100%',
+        }}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    height: 44,
+    height: 48,
     borderRadius: 7,
     borderWidth: 1,
     borderColor: BudgetColors.line,
@@ -48,6 +49,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 12,
+    position: 'relative',
   },
   display: {
     flex: 1,
