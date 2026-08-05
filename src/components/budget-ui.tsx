@@ -1,6 +1,6 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react-native';
 import { ReactElement, ReactNode } from 'react';
-import Animated, { Easing, FadeIn, FadeInDown, FadeInUp, ReduceMotion } from 'react-native-reanimated';
+import Animated, { Easing, FadeIn, FadeInDown, FadeInUp, ReduceMotion, useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 import {
     Pressable,
     RefreshControlProps,
@@ -184,6 +184,39 @@ export function formatCurrency(value: number, digits = 2) {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   }).format(value);
+}
+
+/** Spring-press animation wrapper — drop-in for any Pressable that contains an icon. */
+export function AnimatedIconButton({
+  onPress,
+  style,
+  children,
+  disabled,
+  accessibilityLabel,
+  accessibilityRole,
+}: {
+  onPress: () => void;
+  style?: StyleProp<ViewStyle>;
+  children: ReactNode;
+  disabled?: boolean;
+  accessibilityLabel?: string;
+  accessibilityRole?: string;
+}) {
+  const scale = useSharedValue(1);
+  const animStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+  return (
+    <Pressable
+      accessibilityLabel={accessibilityLabel}
+      accessibilityRole={accessibilityRole as any}
+      disabled={disabled}
+      onPressIn={() => { scale.value = withSpring(0.80, { damping: 14, stiffness: 300 }); }}
+      onPressOut={() => { scale.value = withSpring(1, { damping: 7, stiffness: 200 }); }}
+      onPress={onPress}
+      style={style}
+    >
+      <Animated.View style={animStyle}>{children}</Animated.View>
+    </Pressable>
+  );
 }
 
 const styles = StyleSheet.create({

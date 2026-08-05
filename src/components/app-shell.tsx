@@ -20,9 +20,9 @@ import {
     X,
 } from 'lucide-react-native';
   import { Image } from 'expo-image';
-  import { ReactNode, useEffect, useRef, useState } from 'react';
+  import { ComponentType, ReactNode, useEffect, useRef, useState } from 'react';
   import { Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
-import Animated, { Easing, FadeInDown, ReduceMotion, ZoomIn } from 'react-native-reanimated';
+import Animated, { Easing, FadeInDown, ReduceMotion, ZoomIn, useAnimatedStyle, useSharedValue, withSequence, withSpring, withTiming } from 'react-native-reanimated';
 
 import { BudgetColors, Fonts, MaxContentWidth } from '@/constants/theme';
 import { useBudgetTheme } from '@/hooks/use-budget-theme';
@@ -50,6 +50,56 @@ const mobileNavItems = [
   { label: 'Settings', href: '/settings' as Href, icon: Settings },
 ];
 
+function DesktopNavItem({ item, active, onPress }: {
+  item: { label: string; icon: ComponentType<{ color: string; size: number; strokeWidth?: number }> };
+  active: boolean;
+  onPress: () => void;
+}) {
+  const scale = useSharedValue(active ? 1.2 : 1);
+  const Icon = item.icon;
+  useEffect(() => {
+    scale.value = withSpring(active ? 1.2 : 1, { damping: 12, stiffness: 240 });
+  }, [active]);
+  const iconStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+  return (
+    <Pressable
+      accessibilityRole="link"
+      accessibilityState={{ selected: active }}
+      onPress={onPress}
+      style={({ pressed }) => [styles.navItem, active && styles.navItemActive, pressed && styles.pressed]}>
+      <Animated.View style={iconStyle}>
+        <Icon color={active ? BudgetColors.ink : BudgetColors.muted} size={17} strokeWidth={2} />
+      </Animated.View>
+      <Text style={[styles.navLabel, active && styles.navLabelActive]}>{item.label}</Text>
+    </Pressable>
+  );
+}
+
+function MobileNavItem({ item, active, onPress }: {
+  item: { label: string; icon: ComponentType<{ color: string; size: number }> };
+  active: boolean;
+  onPress: () => void;
+}) {
+  const scale = useSharedValue(active ? 1.2 : 1);
+  const Icon = item.icon;
+  useEffect(() => {
+    scale.value = withSpring(active ? 1.2 : 1, { damping: 12, stiffness: 240 });
+  }, [active]);
+  const iconStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+  return (
+    <Pressable
+      accessibilityRole="link"
+      accessibilityState={{ selected: active }}
+      onPress={onPress}
+      style={({ pressed }) => [styles.mobileNavItem, active && styles.mobileNavItemActive, pressed && styles.pressed]}>
+      <Animated.View style={iconStyle}>
+        <Icon color={active ? BudgetColors.green : BudgetColors.muted} size={20} />
+      </Animated.View>
+      <Text style={[styles.mobileNavLabel, active && styles.mobileNavLabelActive]}>{item.label}</Text>
+    </Pressable>
+  );
+}
+
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { width } = useWindowDimensions();
@@ -59,13 +109,24 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [showDogEgg, setShowDogEgg] = useState(false);
   const { mode, toggle: toggleTheme } = useBudgetTheme();
+  const themeRot   = useSharedValue(0);
+  const settingsRot = useSharedValue(0);
+  const plusScale  = useSharedValue(1);
+  const dollarScale = useSharedValue(1);
+  const menuRot    = useSharedValue(0);
+  const closeScale = useSharedValue(1);
+  const themeIconStyle   = useAnimatedStyle(() => ({ transform: [{ rotate: `${themeRot.value}deg` }] }));
+  const settingsIconStyle = useAnimatedStyle(() => ({ transform: [{ rotate: `${settingsRot.value}deg` }] }));
+  const plusStyle        = useAnimatedStyle(() => ({ transform: [{ scale: plusScale.value }] }));
+  const dollarStyle      = useAnimatedStyle(() => ({ transform: [{ scale: dollarScale.value }] }));
+  const menuIconStyle    = useAnimatedStyle(() => ({ transform: [{ rotate: `${menuRot.value}deg` }] }));
+  const closeStyle       = useAnimatedStyle(() => ({ transform: [{ scale: closeScale.value }] }));
   const desktopPrimaryNavItems = desktopCollapsedNav ? navItems.slice(0, 4) : navItems;
   const brandTapCount = useRef(0);
   const brandTapResetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    setMenuOpen(false);
-  }, [pathname, compact]);
+  useEffect(() => { setMenuOpen(false); }, [pathname, compact]);
+  useEffect(() => { menuRot.value = withSpring(menuOpen ? 90 : 0, { damping: 15, stiffness: 200 }); }, [menuOpen]);
 
   useEffect(() => () => {
     if (brandTapResetTimer.current) clearTimeout(brandTapResetTimer.current);
@@ -112,16 +173,24 @@ export function AppShell({ children }: { children: ReactNode }) {
               {!narrowHeader && <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Add paycheck"
+                onPressIn={() => { dollarScale.value = withSpring(0.82, { damping: 14, stiffness: 300 }); }}
+                onPressOut={() => { dollarScale.value = withSpring(1, { damping: 7, stiffness: 200 }); }}
                 onPress={() => router.push(ADD_PAYCHECK)}
                 style={({ pressed }) => [styles.compactPaycheckButton, pressed && styles.pressed]}>
-                <DollarSign color={BudgetColors.green} size={19} strokeWidth={2.5} />
+                <Animated.View style={dollarStyle}>
+                  <DollarSign color={BudgetColors.green} size={19} strokeWidth={2.5} />
+                </Animated.View>
               </Pressable>}
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Add transaction"
+                onPressIn={() => { plusScale.value = withSpring(0.82, { damping: 14, stiffness: 300 }); }}
+                onPressOut={() => { plusScale.value = withSpring(1, { damping: 7, stiffness: 200 }); }}
                 onPress={() => router.push('/add-transaction')}
                 style={({ pressed }) => [styles.compactAddButton, pressed && styles.pressed]}>
-                <Plus color={BudgetColors.surface} size={19} strokeWidth={2.5} />
+                <Animated.View style={plusStyle}>
+                  <Plus color={BudgetColors.surface} size={19} strokeWidth={2.5} />
+                </Animated.View>
               </Pressable>
               <Pressable
                 accessibilityRole="button"
@@ -129,7 +198,9 @@ export function AppShell({ children }: { children: ReactNode }) {
                 accessibilityState={{ expanded: menuOpen }}
                 onPress={() => setMenuOpen(true)}
                 style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}>
-                <Menu color={BudgetColors.ink} size={21} />
+                <Animated.View style={menuIconStyle}>
+                  <Menu color={BudgetColors.ink} size={21} />
+                </Animated.View>
               </Pressable>
             </View>
           ) : (
@@ -141,26 +212,13 @@ export function AppShell({ children }: { children: ReactNode }) {
                 contentContainerStyle={styles.navContent}>
                 {desktopPrimaryNavItems.map((item) => {
                   const active = item.href === '/' ? pathname === '/' : pathname.startsWith(String(item.href));
-                  const Icon = item.icon;
-
                   return (
-                    <Pressable
+                    <DesktopNavItem
                       key={item.label}
-                      accessibilityRole="link"
-                      accessibilityState={{ selected: active }}
+                      item={item}
+                      active={active}
                       onPress={() => navigate(item.href)}
-                      style={({ pressed }) => [
-                        styles.navItem,
-                        active && styles.navItemActive,
-                        pressed && styles.pressed,
-                      ]}>
-                      <Icon
-                        color={active ? BudgetColors.ink : BudgetColors.muted}
-                        size={17}
-                        strokeWidth={2}
-                      />
-                      <Text style={[styles.navLabel, active && styles.navLabelActive]}>{item.label}</Text>
-                    </Pressable>
+                    />
                   );
                 })}
                 {desktopCollapsedNav && (
@@ -170,7 +228,9 @@ export function AppShell({ children }: { children: ReactNode }) {
                     accessibilityState={{ expanded: menuOpen }}
                     onPress={() => setMenuOpen(true)}
                     style={({ pressed }) => [styles.navItem, styles.navMoreButton, pressed && styles.pressed]}>
-                    <Menu color={BudgetColors.muted} size={17} strokeWidth={2} />
+                    <Animated.View style={menuIconStyle}>
+                      <Menu color={BudgetColors.muted} size={17} strokeWidth={2} />
+                    </Animated.View>
                     <Text style={styles.navLabel}>More</Text>
                   </Pressable>
                 )}
@@ -180,37 +240,49 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Add paycheck"
+                  onPressIn={() => { dollarScale.value = withSpring(0.82, { damping: 14, stiffness: 300 }); }}
+                  onPressOut={() => { dollarScale.value = withSpring(1, { damping: 7, stiffness: 200 }); }}
                   onPress={() => router.push(ADD_PAYCHECK)}
                   style={({ pressed }) => [styles.paycheckButton, pressed && styles.pressed]}>
-                  <DollarSign color={BudgetColors.green} size={19} strokeWidth={2.5} />
+                  <Animated.View style={dollarStyle}>
+                    <DollarSign color={BudgetColors.green} size={19} strokeWidth={2.5} />
+                  </Animated.View>
                 </Pressable>
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Add transaction"
+                  onPressIn={() => { plusScale.value = withSpring(0.82, { damping: 14, stiffness: 300 }); }}
+                  onPressOut={() => { plusScale.value = withSpring(1, { damping: 7, stiffness: 200 }); }}
                   onPress={() => router.push('/add-transaction')}
                   style={({ pressed }) => [styles.addButton, pressed && styles.pressed]}>
-                  <Plus color={BudgetColors.surface} size={18} strokeWidth={2.5} />
+                  <Animated.View style={plusStyle}>
+                    <Plus color={BudgetColors.surface} size={18} strokeWidth={2.5} />
+                  </Animated.View>
                   <Text style={styles.addButtonText}>Add transaction</Text>
                 </Pressable>
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={`Switch to ${mode === 'dark' ? 'light' : 'dark'} mode`}
-                  onPress={toggleTheme}
+                  onPress={() => { themeRot.value = withSpring(themeRot.value + 180, { damping: 16, stiffness: 200 }); toggleTheme(); }}
                   style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}>
-                  {mode === 'dark'
-                    ? <Sun color={BudgetColors.ink} size={19} />
-                    : <Moon color={BudgetColors.ink} size={19} />}
+                  <Animated.View style={themeIconStyle}>
+                    {mode === 'dark'
+                      ? <Sun color={BudgetColors.ink} size={19} />
+                      : <Moon color={BudgetColors.ink} size={19} />}
+                  </Animated.View>
                 </Pressable>
                 <Pressable
                   accessibilityRole="link"
                   accessibilityLabel="Open settings"
-                  onPress={() => navigate('/settings')}
+                  onPress={() => { settingsRot.value = withSequence(withTiming(25, { duration: 130 }), withSpring(0, { damping: 10, stiffness: 280 })); navigate('/settings'); }}
                   style={({ pressed }) => [
                     styles.iconButton,
                     pathname === '/settings' && styles.iconButtonActive,
                     pressed && styles.pressed,
                   ]}>
-                  <Settings color={BudgetColors.ink} size={19} />
+                  <Animated.View style={settingsIconStyle}>
+                    <Settings color={BudgetColors.ink} size={19} />
+                  </Animated.View>
                 </Pressable>
               </View>
             </>
@@ -239,33 +311,26 @@ export function AppShell({ children }: { children: ReactNode }) {
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Close navigation menu"
+                onPressIn={() => { closeScale.value = withSpring(0.82, { damping: 14, stiffness: 300 }); }}
+                onPressOut={() => { closeScale.value = withSpring(1, { damping: 7, stiffness: 200 }); }}
                 onPress={() => setMenuOpen(false)}
                 style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]}>
-                <X color={BudgetColors.ink} size={21} />
+                <Animated.View style={closeStyle}>
+                  <X color={BudgetColors.ink} size={21} />
+                </Animated.View>
               </Pressable>
             </View>
 
             <View style={styles.mobileNav}>
               {mobileNavItems.map((item) => {
                 const active = item.href === '/' ? pathname === '/' : pathname.startsWith(String(item.href));
-                const Icon = item.icon;
-
                 return (
-                  <Pressable
+                  <MobileNavItem
                     key={item.label}
-                    accessibilityRole="link"
-                    accessibilityState={{ selected: active }}
+                    item={item}
+                    active={active}
                     onPress={() => navigate(item.href)}
-                    style={({ pressed }) => [
-                      styles.mobileNavItem,
-                      active && styles.mobileNavItemActive,
-                      pressed && styles.pressed,
-                    ]}>
-                    <Icon color={active ? BudgetColors.green : BudgetColors.muted} size={20} />
-                    <Text style={[styles.mobileNavLabel, active && styles.mobileNavLabelActive]}>
-                      {item.label}
-                    </Text>
-                  </Pressable>
+                  />
                 );
               })}
             </View>
@@ -273,13 +338,15 @@ export function AppShell({ children }: { children: ReactNode }) {
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={`Switch to ${mode === 'dark' ? 'light' : 'dark'} mode`}
-              onPress={toggleTheme}
+              onPress={() => { themeRot.value = withSpring(themeRot.value + 180, { damping: 16, stiffness: 200 }); toggleTheme(); }}
               style={({ pressed }) => [styles.mobileThemeButton, pressed && styles.pressed]}>
-              <View style={styles.mobileThemeIcon}>
-                {mode === 'dark'
-                  ? <Sun color={BudgetColors.gold} size={19} />
-                  : <Moon color={BudgetColors.blue} size={19} />}
-              </View>
+              <Animated.View style={themeIconStyle}>
+                <View style={styles.mobileThemeIcon}>
+                  {mode === 'dark'
+                    ? <Sun color={BudgetColors.gold} size={19} />
+                    : <Moon color={BudgetColors.blue} size={19} />}
+                </View>
+              </Animated.View>
               <View style={styles.mobileThemeCopy}>
                 <Text style={styles.mobileThemeTitle}>{mode === 'dark' ? 'Light mode' : 'Dark mode'}</Text>
                 <Text style={styles.mobileThemeDetail}>Change the appearance on this device</Text>
@@ -290,21 +357,29 @@ export function AppShell({ children }: { children: ReactNode }) {
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Add paycheck"
+                onPressIn={() => { dollarScale.value = withSpring(0.82, { damping: 14, stiffness: 300 }); }}
+                onPressOut={() => { dollarScale.value = withSpring(1, { damping: 7, stiffness: 200 }); }}
                 onPress={() => {
                   setMenuOpen(false);
                   router.push(ADD_PAYCHECK);
                 }}
                 style={({ pressed }) => [styles.mobilePaycheckButton, pressed && styles.pressed]}>
-                <DollarSign color={BudgetColors.green} size={20} strokeWidth={2.5} />
+                <Animated.View style={dollarStyle}>
+                  <DollarSign color={BudgetColors.green} size={20} strokeWidth={2.5} />
+                </Animated.View>
               </Pressable>
               <Pressable
                 accessibilityRole="button"
+                onPressIn={() => { plusScale.value = withSpring(0.82, { damping: 14, stiffness: 300 }); }}
+                onPressOut={() => { plusScale.value = withSpring(1, { damping: 7, stiffness: 200 }); }}
                 onPress={() => {
                   setMenuOpen(false);
                   router.push('/add-transaction');
                 }}
                 style={({ pressed }) => [styles.mobileAddButton, pressed && styles.pressed]}>
-                <Plus color={BudgetColors.surface} size={19} strokeWidth={2.5} />
+                <Animated.View style={plusStyle}>
+                  <Plus color={BudgetColors.surface} size={19} strokeWidth={2.5} />
+                </Animated.View>
                 <Text style={styles.mobileAddButtonText}>Add transaction</Text>
               </Pressable>
             </View>

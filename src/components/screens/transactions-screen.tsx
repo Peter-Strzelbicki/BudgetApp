@@ -4,7 +4,7 @@ import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 
 import { AnimatedHorizontalBar } from '@/components/animated-bar';
-import { EmptyState, ErrorNotice, formatCurrency, MonthSwitcher, moveMonth, Page, PageHeading, Panel, SectionHeader } from '@/components/budget-ui';
+import { EmptyState, ErrorNotice, formatCurrency, MonthSwitcher, moveMonth, Page, PageHeading, Panel, SectionHeader, AnimatedIconButton } from '@/components/budget-ui';
 import { applyRecurringTransactions, BudgetLine, ContributionSummary, deleteTransaction, getBudgetLines, getContributionSummary, getPendingRecurring, getTransactions, Transaction } from '@/constants/api';
 import { TRACKING_START_MONTH, TRACKING_START_YEAR } from '@/constants/tracking-period';
 import { BudgetColors, Fonts } from '@/constants/theme';
@@ -197,8 +197,8 @@ export default function TransactionsScreen() {
         <View style={styles.amountColumn}>
           <Text style={styles.amount}>{formatCurrency(transaction.amount, 2)}</Text>
           <View style={styles.rowActions}>
-            <Pressable accessibilityLabel={`Edit ${transaction.location || transaction.subcategory}`} onPress={() => router.push({ pathname: '/add-transaction', params: { transactionId: String(transaction.transaction_id) } })} style={({ pressed }) => [styles.editButton, pressed && styles.pressed]}><Pencil color={BudgetColors.blue} size={16} /></Pressable>
-            <Pressable accessibilityLabel={`Delete ${transaction.location || transaction.subcategory}`} disabled={deletingId === transaction.transaction_id} onPress={() => remove(transaction)} style={({ pressed }) => [styles.deleteButton, pressed && styles.pressed]}>{deletingId === transaction.transaction_id ? <ActivityIndicator color={BudgetColors.coral} size="small" /> : <Trash2 color={BudgetColors.coral} size={16} />}</Pressable>
+            <AnimatedIconButton accessibilityLabel={`Edit ${transaction.location || transaction.subcategory}`} onPress={() => router.push({ pathname: '/add-transaction', params: { transactionId: String(transaction.transaction_id) } })} style={styles.editButton}><Pencil color={BudgetColors.blue} size={16} /></AnimatedIconButton>
+            <AnimatedIconButton accessibilityLabel={`Delete ${transaction.location || transaction.subcategory}`} disabled={deletingId === transaction.transaction_id} onPress={() => remove(transaction)} style={styles.deleteButton}>{deletingId === transaction.transaction_id ? <ActivityIndicator color={BudgetColors.coral} size="small" /> : <Trash2 color={BudgetColors.coral} size={16} />}</AnimatedIconButton>
           </View>
         </View>
       </View>)}

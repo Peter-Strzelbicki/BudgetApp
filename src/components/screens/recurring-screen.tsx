@@ -2,7 +2,7 @@ import { Pencil, Plus, ReceiptText, Repeat, Save, Trash2, X } from 'lucide-react
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 
-import { EmptyState, ErrorNotice, formatCurrency, Page, PageHeading, Panel, SectionHeader } from '@/components/budget-ui';
+import { EmptyState, ErrorNotice, formatCurrency, Page, PageHeading, Panel, SectionHeader, AnimatedIconButton } from '@/components/budget-ui';
 import {
   Category,
   createRecurringTransaction,
@@ -223,10 +223,10 @@ export default function RecurringScreen() {
                   <Text style={styles.rowDetail}>{rt.subcategory} · {ordinal(rt.day_of_month)} of month{rt.paid_by ? ` · ${rt.paid_by}` : ''}</Text>
                 </View>
                 <Text style={styles.rowAmount}>{formatCurrency(rt.amount, 2)}</Text>
-                <Pressable onPress={() => openEdit(rt)} style={({ pressed }) => [styles.iconBtn, pressed && styles.pressed]}><Pencil color={BudgetColors.blue} size={17} /></Pressable>
-                <Pressable disabled={deletingId === rt.recurring_id} onPress={() => remove(rt)} style={({ pressed }) => [styles.iconBtn, pressed && styles.pressed]}>
+                <AnimatedIconButton onPress={() => openEdit(rt)} style={styles.iconBtn}><Pencil color={BudgetColors.blue} size={17} /></AnimatedIconButton>
+                <AnimatedIconButton disabled={deletingId === rt.recurring_id} onPress={() => remove(rt)} style={styles.iconBtn}>
                   {deletingId === rt.recurring_id ? <ActivityIndicator color={BudgetColors.coral} size="small" /> : <Trash2 color={BudgetColors.coral} size={17} />}
-                </Pressable>
+                </AnimatedIconButton>
               </View>
             ))}
           </Panel>

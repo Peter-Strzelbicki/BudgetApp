@@ -1,4 +1,5 @@
 import { router } from 'expo-router';
+import { AnimatedIconButton } from '@/components/budget-ui';
 import { Copy, Pencil, Plus, Save, Trash2, X } from 'lucide-react-native';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
@@ -181,10 +182,10 @@ export default function BudgetScreen() {
           {managing ? <X color={BudgetColors.green} size={16} /> : <Pencil color={BudgetColors.ink} size={16} />}
           <Text style={[styles.secondaryText, managing && styles.secondaryTextActive]}>{managing ? 'Done' : 'Manage lines'}</Text>
         </Pressable>
-        <Pressable disabled={saving || managing} onPress={saveAll} style={({ pressed }) => [styles.primaryButton, (saving || managing) && styles.disabled, pressed && styles.pressed]}>
+        <AnimatedIconButton disabled={saving || managing} onPress={saveAll} style={[styles.primaryButton, (saving || managing) && styles.disabled]}>
           {saving ? <ActivityIndicator color={BudgetColors.surface} size="small" /> : <Save color={BudgetColors.surface} size={16} />}
           <Text style={styles.primaryText}>{saving ? 'Saving' : 'Save changes'}</Text>
-        </Pressable>
+        </AnimatedIconButton>
       </View>
       {loading ? <View style={styles.loader}><ActivityIndicator color={BudgetColors.green} size="large" /></View> : Object.entries(groups).map(([category, categoryLines]) => {
         const categoryId = categories.find(c => c.name === category)?.category_id ?? null;
@@ -203,15 +204,15 @@ export default function BudgetScreen() {
             const isDeleting = deletingId === line.subcategory_id;
             return <View key={line.subcategory_id} style={[styles.line, compact && styles.lineCompact, index === 0 && styles.lineFirst]}>
               {managing && (
-                <Pressable
+                <AnimatedIconButton
                   accessibilityLabel={`Remove ${line.subcategory}`}
                   disabled={isDeleting}
                   onPress={() => removeLine(line)}
-                  style={({ pressed }) => [styles.deleteBtn, pressed && styles.pressed]}>
+                  style={styles.deleteBtn}>
                   {isDeleting
                     ? <ActivityIndicator color={BudgetColors.coral} size="small" />
                     : <Trash2 color={BudgetColors.coral} size={17} />}
-                </Pressable>
+                </AnimatedIconButton>
               )}
               <Pressable
                 disabled={managing}

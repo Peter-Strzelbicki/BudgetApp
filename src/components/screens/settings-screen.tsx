@@ -3,7 +3,7 @@ import { CheckCircle2, Database, Globe2, Info, Moon, RefreshCw, Server, Sun, Wif
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { Page, PageHeading, Panel, SectionHeader } from '@/components/budget-ui';
+import { Page, PageHeading, Panel, SectionHeader, AnimatedIconButton } from '@/components/budget-ui';
 import { API_URL, BackupStatus, getApiStatus, getBackupStatus, getCategories, runBackupNow } from '@/constants/api';
 import { BudgetColors, Fonts } from '@/constants/theme';
 import { useBudgetTheme } from '@/hooks/use-budget-theme';
@@ -60,7 +60,7 @@ export default function SettingsScreen() {
 
   const webUrl = API_URL.replace(/:3000$/, ':8081');
   return <Page>
-    <PageHeading eyebrow="System" title="Connection settings" description="Live status for the private services that power HomeBudget." action={<Pressable disabled={state === 'checking'} onPress={check} style={({ pressed }) => [styles.refreshButton, pressed && styles.pressed]}>{state === 'checking' ? <ActivityIndicator color={BudgetColors.surface} size="small" /> : <RefreshCw color={BudgetColors.surface} size={16} />}<Text style={styles.refreshText}>Check connection</Text></Pressable>} />
+    <PageHeading eyebrow="System" title="Connection settings" description="Live status for the private services that power HomeBudget." action={<AnimatedIconButton disabled={state === 'checking'} onPress={check} style={styles.refreshButton}>{state === 'checking' ? <ActivityIndicator color={BudgetColors.surface} size="small" /> : <RefreshCw color={BudgetColors.surface} size={16} />}<Text style={styles.refreshText}>Check connection</Text></AnimatedIconButton>} />
     <View style={[styles.statusBanner, state === 'online' ? styles.statusOnline : state === 'offline' ? styles.statusOffline : styles.statusChecking]}>
       {state === 'online' ? <CheckCircle2 color={BudgetColors.green} size={22} /> : state === 'offline' ? <XCircle color={BudgetColors.coral} size={22} /> : <ActivityIndicator color={BudgetColors.blue} />}
       <View style={styles.statusCopy}><Text style={styles.statusTitle}>{state === 'online' ? 'All systems connected' : state === 'offline' ? 'Connection unavailable' : 'Checking services'}</Text><Text style={styles.statusDetail}>{message || (checkedAt ? `Last checked ${checkedAt.toLocaleTimeString()}` : 'Contacting the Raspberry Pi')}</Text></View>

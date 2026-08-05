@@ -2,7 +2,7 @@ import { Check, Plus, Trash2 } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { EmptyState, ErrorNotice, Page, PageHeading, Panel, SectionHeader } from '@/components/budget-ui';
+import { EmptyState, ErrorNotice, Page, PageHeading, Panel, SectionHeader, AnimatedIconButton } from '@/components/budget-ui';
 import { addGoal, deleteGoal, getGoals, Goal } from '@/constants/api';
 import { BudgetColors, Fonts } from '@/constants/theme';
 
@@ -58,7 +58,7 @@ export default function GoalsScreen() {
       {loading ? <View style={styles.loader}><ActivityIndicator color={BudgetColors.green} /></View> : goals.length === 0 ? <EmptyState title="No goals yet" detail="Add the first priority you want the household budget to support." /> : goals.map((goal, index) => <View key={goal.goal_id} style={[styles.goal, index === 0 && styles.goalFirst]}>
         <View style={styles.check}><Check color={BudgetColors.green} size={17} /></View>
         <Text style={styles.goalText}>{goal.description}</Text>
-        <Pressable accessibilityLabel={`Delete ${goal.description}`} onPress={() => remove(goal.goal_id)} style={({ pressed }) => [styles.deleteButton, pressed && styles.pressed]}><Trash2 color={BudgetColors.coral} size={17} /></Pressable>
+        <AnimatedIconButton accessibilityLabel={`Delete ${goal.description}`} onPress={() => remove(goal.goal_id)} style={styles.deleteButton}><Trash2 color={BudgetColors.coral} size={17} /></AnimatedIconButton>
       </View>)}
     </Panel>
   </Page>;
