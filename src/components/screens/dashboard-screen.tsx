@@ -187,8 +187,8 @@ export default function DashboardScreen() {
       {monthLoading && <View style={styles.monthLoading}><ActivityIndicator color={BudgetColors.green} size="small" /><Text style={styles.monthLoadingText}>Loading {selectedMonthName}</Text></View>}
       {loading ? <View style={styles.loader}><ActivityIndicator color={BudgetColors.green} size="large" /></View> : (
         <>
-          <View style={styles.statsGrid}>
-            <Pressable onPress={() => router.push({ pathname: '/transactions', params: { month: String(selectedMonth), year: String(year) } })} style={({ pressed }) => [styles.donutCard, pressed && styles.pressed]}>
+          <View style={[styles.statsGrid, compact && styles.statsGridCompact]}>
+            <Pressable onPress={() => router.push({ pathname: '/transactions', params: { month: String(selectedMonth), year: String(year) } })} style={({ pressed }) => [styles.donutCard, compact && styles.donutCardCompact, pressed && styles.pressed]}>
               <Text style={styles.donutCardLabel}>{selectedMonthName} budget</Text>
               <View style={styles.donutBody}>
                 <View style={styles.donutWrap}>
@@ -215,7 +215,7 @@ export default function DashboardScreen() {
                 </View>
               </View>
             </Pressable>
-            <Pressable onPress={() => router.push('/savings' as any)} style={({ pressed }) => [styles.netCard, pressed && styles.pressed]}>
+            <Pressable onPress={() => router.push('/savings' as any)} style={({ pressed }) => [styles.netCard, compact && styles.netCardCompact, pressed && styles.pressed]}>
               <StatCard
                 label={`${year} net`}
                 value={formatCurrency(yearNet)}
@@ -249,7 +249,7 @@ export default function DashboardScreen() {
           <ContributionPanel summary={contribution} action={<TextLink label="Manage income" onPress={() => router.push('/budget')} />} />
 
           <View style={[styles.twoColumn, compact && styles.oneColumn]}>
-            <Panel style={styles.chartPanel}>
+            <Panel style={[styles.chartPanel, compact && styles.compactPanel]}>
               <SectionHeader
                 title={`${year} monthly cash flow`}
                 detail={`${selectedMonthName}: ${formatCurrency(monthSpend)} spent · ${formatCurrency(monthlyIncome)} income · ${planned > 0 ? `${formatCurrency(planned)} projected` : 'no plan entered'}`}
@@ -306,7 +306,7 @@ export default function DashboardScreen() {
           </View>
 
           <View style={[styles.twoColumn, compact && styles.oneColumn]}>
-            <Panel style={styles.variancePanel}>
+            <Panel style={[styles.variancePanel, compact && styles.compactPanel]}>
               <SectionHeader title="Monthly budget check" detail="Actual spending compared with each month's plan" />
               {!ytd || ytd.monthly_variance.length === 0 ? (
                 <EmptyState title="No budget history" detail="Monthly comparisons will appear after plans are entered." />
@@ -393,6 +393,7 @@ function buildYearlyCategoryAverages(categoryRowsByMonth: CategorySummary[][], b
 
 const styles = StyleSheet.create({
   netCard: { flex: 1 },
+  netCardCompact: { width: '100%', flexGrow: 0, flexShrink: 1, flexBasis: 'auto' },
   headingActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 10, flexWrap: 'wrap' },
   primaryButton: { minHeight: 42, paddingHorizontal: 15, borderRadius: 8, backgroundColor: BudgetColors.green, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   primaryButtonText: { color: BudgetColors.surface, fontFamily: Fonts.sans, fontSize: 13, fontWeight: '800' },
@@ -401,6 +402,7 @@ const styles = StyleSheet.create({
   monthLoading: { minHeight: 38, paddingHorizontal: 12, borderRadius: 7, backgroundColor: BudgetColors.greenSoft, flexDirection: 'row', alignItems: 'center', gap: 8 },
   monthLoadingText: { color: BudgetColors.green, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '800' },
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  statsGridCompact: { flexDirection: 'column', width: '100%' },
   incomeBarPanel: { padding: 20, borderRadius: 8, backgroundColor: BudgetColors.surface, borderWidth: 1, borderColor: BudgetColors.line },
   incomeBarHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
   incomeBarTitle: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '800' },
@@ -413,7 +415,8 @@ const styles = StyleSheet.create({
   incomeLeft: { color: BudgetColors.green, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '800' },
   incomeOver: { color: BudgetColors.coral },
   twoColumn: { flexDirection: 'row', alignItems: 'stretch', gap: 16 },
-  oneColumn: { flexDirection: 'column' },
+  oneColumn: { flexDirection: 'column', width: '100%' },
+  compactPanel: { width: '100%', flexGrow: 0, flexShrink: 1, flexBasis: 'auto' },
   chartPanel: { flex: 1.45, minWidth: 0 },
   chartHeaderActions: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' },
   chartHelper: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 10, fontWeight: '700', marginBottom: 6 },
@@ -464,6 +467,7 @@ const styles = StyleSheet.create({
   categoryAverageDetail: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 9 },
   categoryAverageVariance: { color: BudgetColors.faint, fontFamily: Fonts.sans, fontSize: 10, fontWeight: '800', textAlign: 'right' },
   donutCard: { flex: 2, minWidth: 200, borderRadius: 8, borderWidth: 1, borderColor: BudgetColors.line, backgroundColor: BudgetColors.surface, padding: 17, gap: 10 },
+  donutCardCompact: { width: '100%', minWidth: 0, flexGrow: 0, flexShrink: 1, flexBasis: 'auto' },
   donutCardLabel: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 10, fontWeight: '800' },
   donutBody: { flexDirection: 'row', alignItems: 'center', gap: 16 },
   donutWrap: { position: 'relative', width: 120, height: 120 },

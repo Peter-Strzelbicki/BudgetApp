@@ -1071,7 +1071,7 @@ app.get("/contributions", async (req, res) => {
         period
       ),
       query(
-        `SELECT person_id, payment_date, amoun  1t, created_at
+        `SELECT person_id, payment_date, amount, created_at
          FROM ${prefix}.joint_payments
          WHERE ${monthExpression("payment_date")}`,
         period

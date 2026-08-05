@@ -64,8 +64,9 @@ export function SectionHeader({ title, detail, action }: {
   detail?: string;
   action?: ReactNode;
 }) {
+  const compact = useWindowDimensions().width < 520;
   return (
-    <View style={styles.sectionHeader}>
+    <View style={[styles.sectionHeader, compact && styles.sectionHeaderCompact]}>
       <View style={styles.sectionCopy}>
         <Text style={styles.sectionTitle}>{title}</Text>
         {detail && <Text style={styles.sectionDetail}>{detail}</Text>}
@@ -199,6 +200,7 @@ const styles = StyleSheet.create({
   description: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 14, lineHeight: 21 },
   panel: { backgroundColor: BudgetColors.surface, borderWidth: 1, borderColor: BudgetColors.line, borderRadius: 8, padding: 20 },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 18 },
+  sectionHeaderCompact: { flexDirection: 'column', alignItems: 'stretch' },
   sectionCopy: { flex: 1, gap: 3 },
   sectionTitle: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 16, fontWeight: '800' },
   sectionDetail: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 12 },

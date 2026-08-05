@@ -231,7 +231,7 @@ export default function AddTransactionScreen() {
         {categoryId && <View style={styles.subcategoryBlock}><Text style={styles.fieldLabel}>Subcategory</Text>{loadingSubs ? <ActivityIndicator color={BudgetColors.green} /> : <View style={styles.choices}>{subcategories.map(subcategory => <Choice key={subcategory.subcategory_id} label={subcategory.name} selected={subcategoryId === subcategory.subcategory_id} onPress={() => setSubcategoryId(subcategory.subcategory_id)} />)}</View>}</View>}
       </Panel>
       <View style={[styles.columns, compact && styles.columnsCompact]}>
-        <Panel style={styles.column}>
+        <Panel style={[styles.column, compact && styles.columnCompact]}>
           <SectionHeader title="Expense details" detail="Amount, date, and merchant" />
           <Field icon={<ReceiptText color={BudgetColors.muted} size={17} />} label="Amount" required><View style={styles.amountInput}><Text style={styles.dollar}>$</Text><TextInput value={amount} onChangeText={value => setAmount(sanitizeSignedAmountInput(value))} placeholder="0.00" placeholderTextColor={BudgetColors.faint} keyboardType="decimal-pad" style={styles.flexInput} /></View></Field>
           <Field icon={<CalendarDays color={BudgetColors.muted} size={17} />} label="Date" required>
@@ -296,7 +296,7 @@ export default function AddTransactionScreen() {
             )}
           </View>
         </Panel>
-        <Panel style={styles.column}>
+        <Panel style={[styles.column, compact && styles.columnCompact]}>
           <SectionHeader title="Household context" detail="Who paid and any useful detail" />
           <Field icon={<UserRound color={BudgetColors.muted} size={17} />} label="Paid by"><View style={styles.choices}>{people.map(person => <Choice key={person.person_id} label={person.name} selected={personId === person.person_id} onPress={() => setPersonId(current => current === person.person_id ? null : person.person_id)} />)}</View></Field>
           <View style={styles.recentPanel}>
@@ -320,10 +320,10 @@ export default function AddTransactionScreen() {
           <Field icon={<NotebookPen color={BudgetColors.muted} size={17} />} label="Notes"><TextInput value={notes} onChangeText={setNotes} placeholder="Optional context" placeholderTextColor={BudgetColors.faint} maxLength={255} multiline numberOfLines={5} textAlignVertical="top" style={[styles.input, styles.notes]} /></Field>
         </Panel>
       </View>
-      <View style={styles.actions}>
-        <Pressable onPress={() => editing ? router.back() : router.replace('/transactions')} style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}><Text style={styles.secondaryText}>{editing ? 'Back to ledger' : 'View ledger'}</Text></Pressable>
-        <Pressable disabled={submitting} onPress={reset} style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}><RotateCcw color={BudgetColors.ink} size={16} /><Text style={styles.secondaryText}>{editing ? 'Reset' : 'Clear'}</Text></Pressable>
-        <Pressable disabled={submitting} onPress={submit} style={({ pressed }) => [styles.primaryButton, submitting && styles.disabled, pressed && styles.pressed]}>{submitting ? <ActivityIndicator color={BudgetColors.surface} size="small" /> : <ReceiptText color={BudgetColors.surface} size={16} />}<Text style={styles.primaryText}>{submitting ? 'Saving' : editing ? 'Save changes' : 'Save transaction'}</Text></Pressable>
+      <View style={[styles.actions, compact && styles.actionsCompact]}>
+        <Pressable onPress={() => editing ? router.back() : router.replace('/transactions')} style={({ pressed }) => [styles.secondaryButton, compact && styles.actionButtonCompact, pressed && styles.pressed]}><Text style={styles.secondaryText}>{editing ? 'Back to ledger' : 'View ledger'}</Text></Pressable>
+        <Pressable disabled={submitting} onPress={reset} style={({ pressed }) => [styles.secondaryButton, compact && styles.actionButtonCompact, pressed && styles.pressed]}><RotateCcw color={BudgetColors.ink} size={16} /><Text style={styles.secondaryText}>{editing ? 'Reset' : 'Clear'}</Text></Pressable>
+        <Pressable disabled={submitting} onPress={submit} style={({ pressed }) => [styles.primaryButton, compact && styles.actionButtonCompact, submitting && styles.disabled, pressed && styles.pressed]}>{submitting ? <ActivityIndicator color={BudgetColors.surface} size="small" /> : <ReceiptText color={BudgetColors.surface} size={16} />}<Text style={styles.primaryText}>{submitting ? 'Saving' : editing ? 'Save changes' : 'Save transaction'}</Text></Pressable>
       </View>
     </>}
     <Modal transparent statusBarTranslucent animationType="none" visible={Boolean(toastMessage)}>
@@ -366,12 +366,12 @@ const styles = StyleSheet.create({
   toastText: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 13, fontWeight: '800' },
   fieldLabel: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '800', marginBottom: 8 }, choices: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
   choice: { minHeight: 36, paddingHorizontal: 11, borderRadius: 7, borderWidth: 1, borderColor: BudgetColors.line, backgroundColor: BudgetColors.canvas, alignItems: 'center', justifyContent: 'center' }, choiceSelected: { borderColor: BudgetColors.green, backgroundColor: BudgetColors.greenSoft }, choiceText: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '700' }, choiceTextSelected: { color: BudgetColors.green },
-  subcategoryBlock: { marginTop: 22 }, columns: { flexDirection: 'row', alignItems: 'flex-start', gap: 16 }, columnsCompact: { flexDirection: 'column' }, column: { flex: 1, width: '100%', gap: 18 },
-  categoryBudgetPanel: { marginTop: 6, borderRadius: 7, borderWidth: 1, borderColor: BudgetColors.line, backgroundColor: BudgetColors.surface, padding: 11, gap: 7 },
+  subcategoryBlock: { marginTop: 22 }, columns: { flexDirection: 'row', alignItems: 'flex-start', gap: 16 }, columnsCompact: { flexDirection: 'column' }, column: { flex: 1, minWidth: 0, gap: 18 }, columnCompact: { alignSelf: 'stretch', flexGrow: 0, flexShrink: 1, flexBasis: 'auto' },
+  categoryBudgetPanel: { width: '100%', minWidth: 0, marginTop: 6, borderRadius: 7, borderWidth: 1, borderColor: BudgetColors.line, backgroundColor: BudgetColors.surface, padding: 11, gap: 7 },
   categoryBudgetTitle: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' },
-  categoryBudgetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
-  categoryBudgetDetail: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11 },
-  categoryBudgetRemaining: { color: BudgetColors.green, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '800' },
+  categoryBudgetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
+  categoryBudgetDetail: { flexShrink: 1, color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11 },
+  categoryBudgetRemaining: { flexShrink: 1, color: BudgetColors.green, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '800' },
   categoryBudgetOver: { color: BudgetColors.coral },
   categoryBudgetTrack: { height: 11, borderRadius: 6, backgroundColor: BudgetColors.canvas, overflow: 'hidden' },
   categoryBudgetFill: { height: 11, borderRadius: 6, backgroundColor: BudgetColors.green },
@@ -389,7 +389,7 @@ const styles = StyleSheet.create({
   field: { gap: 7 }, fieldHeading: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   input: { height: 44, borderRadius: 7, borderWidth: 1, borderColor: BudgetColors.line, backgroundColor: BudgetColors.canvas, color: BudgetColors.ink, paddingHorizontal: 12, fontFamily: Fonts.sans, fontSize: 13 }, notes: { height: 118, paddingTop: 11 },
   amountInput: { height: 44, borderRadius: 7, borderWidth: 1, borderColor: BudgetColors.line, backgroundColor: BudgetColors.canvas, flexDirection: 'row', alignItems: 'center' }, dollar: { color: BudgetColors.muted, paddingLeft: 12, fontFamily: Fonts.sans, fontSize: 14 }, flexInput: { flex: 1, height: 42, paddingHorizontal: 8, color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 14, fontWeight: '800' },
-  actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }, secondaryButton: { height: 42, paddingHorizontal: 14, borderRadius: 7, borderWidth: 1, borderColor: BudgetColors.line, backgroundColor: BudgetColors.surface, flexDirection: 'row', alignItems: 'center', gap: 7 }, secondaryText: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' }, primaryButton: { height: 42, paddingHorizontal: 16, borderRadius: 7, backgroundColor: BudgetColors.green, flexDirection: 'row', alignItems: 'center', gap: 7 }, primaryText: { color: BudgetColors.surface, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' }, disabled: { opacity: 0.5 }, pressed: { opacity: 0.68 },
+  actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }, actionsCompact: { flexDirection: 'column', width: '100%' }, actionButtonCompact: { width: '100%', justifyContent: 'center' }, secondaryButton: { height: 42, paddingHorizontal: 14, borderRadius: 7, borderWidth: 1, borderColor: BudgetColors.line, backgroundColor: BudgetColors.surface, flexDirection: 'row', alignItems: 'center', gap: 7 }, secondaryText: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' }, primaryButton: { height: 42, paddingHorizontal: 16, borderRadius: 7, backgroundColor: BudgetColors.green, flexDirection: 'row', alignItems: 'center', gap: 7 }, primaryText: { color: BudgetColors.surface, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' }, disabled: { opacity: 0.5 }, pressed: { opacity: 0.68 },
   recurringHint: { flexDirection: 'row', alignItems: 'center', gap: 9, marginTop: 4, padding: 10, borderRadius: 7, borderWidth: 1, borderColor: BudgetColors.successLine, backgroundColor: BudgetColors.greenSoft }, recurringHintCopy: { flex: 1, minWidth: 0, gap: 1 }, recurringHintTitle: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '800' }, recurringHintDetail: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 10 }, recurringHintApply: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 5, backgroundColor: BudgetColors.green }, recurringHintApplyText: { color: BudgetColors.surface, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '800' }, recurringHintDismiss: { padding: 5 },
   duplicateHint: { flexDirection: 'row', alignItems: 'center', gap: 9, marginTop: 4, padding: 10, borderRadius: 7, borderWidth: 1, borderColor: BudgetColors.warningLine, backgroundColor: BudgetColors.goldSoft }, duplicateHintTitle: { color: BudgetColors.warningInk, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '800' },
 });
