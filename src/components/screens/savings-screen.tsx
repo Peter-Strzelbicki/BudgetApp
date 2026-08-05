@@ -1,6 +1,7 @@
+import { router } from 'expo-router';
 import { PiggyBank, Scale } from 'lucide-react-native';
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { ErrorNotice, formatCurrency, Page, PageHeading, Panel, SectionHeader, StatCard } from '@/components/budget-ui';
 import { getContributionSummary, getTransactions, Transaction } from '@/constants/api';
@@ -92,13 +93,15 @@ export default function SavingsScreen() {
       {loading ? <View style={styles.loader}><ActivityIndicator color={BudgetColors.green} size="large" /></View> : (
         <>
           <View style={styles.statsGrid}>
-            <StatCard
+            <Pressable onPress={() => router.push({ pathname: '/transactions', params: { category: 'Savings/Investments' } })} style={({ pressed }) => [pressed && styles.statPressed]}>
+              <StatCard
               label="Total savings recorded"
               value={formatCurrency(totalSavings)}
               detail={`${savingsTransactions.length} recorded entr${savingsTransactions.length === 1 ? 'y' : 'ies'} since May 2025${generatedSavingsCount > 0 ? `; ${generatedSavingsCount} import estimate excluded` : ''}`}
               icon={<PiggyBank color={BudgetColors.green} size={19} />}
               accent={BudgetColors.green}
-            />
+              />
+            </Pressable>
             <StatCard
               label="Adjusted savings total"
               value={formatCurrency(adjustedSavings)}
@@ -163,6 +166,7 @@ export default function SavingsScreen() {
 
 const styles = StyleSheet.create({
   loader: { minHeight: 320, alignItems: 'center', justifyContent: 'center' },
+  statPressed: { opacity: 0.68 },
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
   row: { minHeight: 60, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, borderTopWidth: 1, borderTopColor: BudgetColors.line, paddingVertical: 10 },
   rowCopy: { flex: 1, minWidth: 0, gap: 2 },

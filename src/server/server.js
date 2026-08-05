@@ -206,6 +206,10 @@ function isIsoDate(value) {
   return !Number.isNaN(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === value;
 }
 
+function isIsoTime(value) {
+  return typeof value === "string" && /^\d{2}:\d{2}(:\d{2})?$/.test(value);
+}
+
 function currentIsoDate() {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
@@ -340,6 +344,9 @@ async function ensureFeatureSchema() {
     await query(`
       ALTER TABLE public.transactions
       ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`);
+    await query(`
+      ALTER TABLE public.transactions
+      ADD COLUMN IF NOT EXISTS transaction_time TIME`);
     await query(`
       CREATE INDEX IF NOT EXISTS ix_transactions_date
       ON public.transactions (transaction_date)`);
@@ -481,6 +488,9 @@ async function ensureFeatureSchema() {
     IF COL_LENGTH('dbo.transactions', 'created_at') IS NULL
       ALTER TABLE dbo.transactions ADD created_at DATETIME2(0) NOT NULL CONSTRAINT DF_transactions_created_at DEFAULT (SYSUTCDATETIME())`);
   await query(`
+    IF COL_LENGTH('dbo.transactions', 'transaction_time') IS NULL
+      ALTER TABLE dbo.transactions ADD transaction_time TIME NULL`);
+  await query(`
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_transactions_date' AND object_id = OBJECT_ID(N'dbo.transactions'))
       CREATE INDEX IX_transactions_date ON dbo.transactions(transaction_date)`);
   await query(`
@@ -582,7 +592,7 @@ app.get("/transactions", async (req, res) => {
     if (dbType === "postgres") {
       queryText = `
          SELECT t.transaction_id, t.subcategory_id, sc.category_id, t.paid_by_person_id,
-           t.transaction_date, t.amount, t.location, t.notes,
+           t.transaction_date, t.transaction_time, t.amount, t.location, t.notes,
            sc.name AS subcategory, c.name AS category, p.name AS paid_by,
            EXISTS(
              SELECT 1
@@ -610,7 +620,7 @@ app.get("/transactions", async (req, res) => {
     } else {
       queryText = `
          SELECT t.transaction_id, t.subcategory_id, sc.category_id, t.paid_by_person_id,
-           t.transaction_date, t.amount, t.location, t.notes,
+           t.transaction_date, t.transaction_time, t.amount, t.location, t.notes,
            sc.name AS subcategory, c.name AS category, p.name AS paid_by,
            CASE WHEN EXISTS(
              SELECT 1
@@ -654,7 +664,7 @@ app.get("/transactions/:transactionId", async (req, res) => {
 
     const queryText = dbType === "postgres"
       ? `SELECT t.transaction_id, t.subcategory_id, sc.category_id, t.paid_by_person_id,
-                t.transaction_date, t.amount, t.location, t.notes,
+                t.transaction_date, t.transaction_time, t.amount, t.location, t.notes,
                 sc.name AS subcategory, c.name AS category, p.name AS paid_by,
                 EXISTS(
                   SELECT 1
@@ -674,7 +684,7 @@ app.get("/transactions/:transactionId", async (req, res) => {
          LEFT JOIN public.people p ON p.person_id = t.paid_by_person_id
          WHERE t.transaction_id = @transaction_id`
       : `SELECT t.transaction_id, t.subcategory_id, sc.category_id, t.paid_by_person_id,
-                t.transaction_date, t.amount, t.location, t.notes,
+                t.transaction_date, t.transaction_time, t.amount, t.location, t.notes,
                 sc.name AS subcategory, c.name AS category, p.name AS paid_by,
                 CASE WHEN EXISTS(
                   SELECT 1
@@ -705,22 +715,24 @@ app.get("/transactions/:transactionId", async (req, res) => {
 
 app.post("/transactions", async (req, res) => {
   try {
-    const { subcategory_id, transaction_date, amount, location, paid_by_person_id, notes } = req.body;
+    const { subcategory_id, transaction_date, transaction_time, amount, location, paid_by_person_id, notes } = req.body;
 
     if (!Number.isInteger(Number(subcategory_id)) || !isIsoDate(transaction_date) ||
-        !Number.isFinite(Number(amount)) || Number(amount) === 0) {
+        !Number.isFinite(Number(amount)) || Number(amount) === 0 ||
+        (transaction_time && !isIsoTime(transaction_time))) {
       return res.status(400).json({ error: "Valid subcategory, transaction date, and amount are required" });
     }
 
     if (dbType === "postgres") {
       const rows = await query(
         `
-          INSERT INTO public.transactions (subcategory_id, transaction_date, amount, location, paid_by_person_id, notes)
-          VALUES (@subcategory_id, @transaction_date, @amount, @location, @paid_by_person_id, @notes)
+          INSERT INTO public.transactions (subcategory_id, transaction_date, transaction_time, amount, location, paid_by_person_id, notes)
+          VALUES (@subcategory_id, @transaction_date, @transaction_time, @amount, @location, @paid_by_person_id, @notes)
           RETURNING transaction_id`,
         {
           subcategory_id: Number(subcategory_id),
           transaction_date,
+          transaction_time: transaction_time || null,
           amount: Number(amount),
           location: location || null,
           paid_by_person_id: paid_by_person_id ? Number(paid_by_person_id) : null,
@@ -735,15 +747,16 @@ app.post("/transactions", async (req, res) => {
     const request = db.request();
     request.input("subcategory_id", mssql.Int, Number(subcategory_id));
     request.input("transaction_date", mssql.Date, transaction_date);
+    request.input("transaction_time", mssql.Time, transaction_time || null);
     request.input("amount", mssql.Decimal(10, 2), Number(amount));
     request.input("location", mssql.NVarChar(100), location || null);
     request.input("paid_by_person_id", mssql.Int, paid_by_person_id ? Number(paid_by_person_id) : null);
     request.input("notes", mssql.NVarChar(255), notes || null);
 
     const result = await request.query(`
-      INSERT INTO dbo.transactions (subcategory_id, transaction_date, amount, location, paid_by_person_id, notes)
+      INSERT INTO dbo.transactions (subcategory_id, transaction_date, transaction_time, amount, location, paid_by_person_id, notes)
       OUTPUT INSERTED.transaction_id AS transaction_id
-      VALUES (@subcategory_id, @transaction_date, @amount, @location, @paid_by_person_id, @notes)
+      VALUES (@subcategory_id, @transaction_date, @transaction_time, @amount, @location, @paid_by_person_id, @notes)
     `);
 
     return res.status(201).json({ transaction_id: result.recordset[0].transaction_id });
@@ -756,9 +769,10 @@ app.post("/transactions", async (req, res) => {
 app.put("/transactions/:transactionId", async (req, res) => {
   try {
     const transactionId = Number(req.params.transactionId);
-    const { subcategory_id, transaction_date, amount, location, paid_by_person_id, notes } = req.body;
+    const { subcategory_id, transaction_date, transaction_time, amount, location, paid_by_person_id, notes } = req.body;
     if (!Number.isInteger(transactionId) || !Number.isInteger(Number(subcategory_id)) ||
-        !isIsoDate(transaction_date) || !Number.isFinite(Number(amount)) || Number(amount) === 0) {
+        !isIsoDate(transaction_date) || !Number.isFinite(Number(amount)) || Number(amount) === 0 ||
+        (transaction_time && !isIsoTime(transaction_time))) {
       return res.status(400).json({ error: "Valid transaction, subcategory, date, and amount are required" });
     }
 
@@ -766,6 +780,7 @@ app.put("/transactions/:transactionId", async (req, res) => {
       transaction_id: transactionId,
       subcategory_id: Number(subcategory_id),
       transaction_date,
+      transaction_time: transaction_time || null,
       amount: Number(amount),
       location: location || null,
       paid_by_person_id: paid_by_person_id ? Number(paid_by_person_id) : null,
@@ -777,6 +792,7 @@ app.put("/transactions/:transactionId", async (req, res) => {
         `UPDATE public.transactions
          SET subcategory_id = @subcategory_id,
              transaction_date = @transaction_date,
+             transaction_time = @transaction_time,
              amount = @amount,
              location = @location,
              paid_by_person_id = @paid_by_person_id,
@@ -794,6 +810,7 @@ app.put("/transactions/:transactionId", async (req, res) => {
     request.input("transaction_id", mssql.Int, transactionId);
     request.input("subcategory_id", mssql.Int, params.subcategory_id);
     request.input("transaction_date", mssql.Date, transaction_date);
+    request.input("transaction_time", mssql.Time, params.transaction_time);
     request.input("amount", mssql.Decimal(10, 2), params.amount);
     request.input("location", mssql.NVarChar(100), params.location);
     request.input("paid_by_person_id", mssql.Int, params.paid_by_person_id);
@@ -802,6 +819,7 @@ app.put("/transactions/:transactionId", async (req, res) => {
       UPDATE dbo.transactions
       SET subcategory_id = @subcategory_id,
           transaction_date = @transaction_date,
+          transaction_time = @transaction_time,
           amount = @amount,
           location = @location,
           paid_by_person_id = @paid_by_person_id,
@@ -1053,7 +1071,7 @@ app.get("/contributions", async (req, res) => {
         period
       ),
       query(
-        `SELECT person_id, payment_date, amount, created_at
+        `SELECT person_id, payment_date, amoun  1t, created_at
          FROM ${prefix}.joint_payments
          WHERE ${monthExpression("payment_date")}`,
         period

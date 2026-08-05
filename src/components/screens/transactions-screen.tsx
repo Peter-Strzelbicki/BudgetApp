@@ -1,4 +1,4 @@
-import { useFocusEffect, router } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, router } from 'expo-router';
 import { MapPin, Pencil, Plus, ReceiptText, Repeat, Search, Trash2, UserRound } from 'lucide-react-native';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
@@ -12,8 +12,9 @@ import { BudgetColors, Fonts } from '@/constants/theme';
 export default function TransactionsScreen() {
   const now = new Date();
   const compact = useWindowDimensions().width < 720;
-  const [month, setMonth] = useState(now.getMonth() + 1);
-  const [year, setYear] = useState(now.getFullYear());
+  const params = useLocalSearchParams<{ month?: string; year?: string; category?: string }>();
+  const [month, setMonth] = useState(() => params.month ? Number(params.month) : now.getMonth() + 1);
+  const [year, setYear] = useState(() => params.year ? Number(params.year) : now.getFullYear());
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
@@ -23,7 +24,7 @@ export default function TransactionsScreen() {
   const [applying, setApplying] = useState(false);
   const [contribution, setContribution] = useState<ContributionSummary | null>(null);
   const [budgetLines, setBudgetLines] = useState<BudgetLine[]>([]);
-  const [categoryFilter, setCategoryFilter] = useState('All');
+  const [categoryFilter, setCategoryFilter] = useState(() => params.category ?? 'All');
 
   const load = async () => {
     setLoading(true); setError(null);
@@ -173,8 +174,9 @@ export default function TransactionsScreen() {
         {(query || categoryFilter !== 'All') && <Text style={styles.totalsContext}>of {formatCurrency(total, 2)} this month</Text>}
       </View>
       {loading ? <View style={styles.loader}><ActivityIndicator color={BudgetColors.green} size="large" /></View> : filtered.length === 0 ? <EmptyState title={query ? 'Nothing matches' : 'No transactions yet'} detail={query ? 'Try a category, person, or location.' : 'Record the first expense for this month.'} /> : filtered.map((transaction, index) => <View key={transaction.transaction_id} style={[styles.row, compact && styles.rowCompact, index === 0 && styles.rowFirst]}>
-        <View style={styles.glyph}><ReceiptText color={BudgetColors.green} size={18} /></View>
-        <View style={styles.main}>
+        <Pressable style={({ pressed }) => [styles.rowContent, pressed && styles.pressed]} onPress={() => router.push({ pathname: '/add-transaction', params: { transactionId: String(transaction.transaction_id) } })}>
+          <View style={styles.glyph}><ReceiptText color={BudgetColors.green} size={18} /></View>
+          <View style={styles.main}>
           <View style={styles.titleRow}><Text style={styles.name} numberOfLines={1}>{transaction.location || transaction.subcategory}</Text><View style={styles.categoryChip}><Text style={styles.categoryText}>{transaction.category}</Text></View></View>
           <View style={styles.metaRow}>
             <Text style={styles.meta}>{transaction.subcategory} · {new Date(transaction.transaction_date).toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' })}</Text>
@@ -190,7 +192,8 @@ export default function TransactionsScreen() {
             {transaction.paid_by && <View style={styles.detail}><UserRound color={BudgetColors.faint} size={12} /><Text style={styles.detailText}>{transaction.paid_by}</Text></View>}
           </View>
           {transaction.notes && <Text style={styles.note} numberOfLines={2}>{transaction.notes}</Text>}
-        </View>
+          </View>
+        </Pressable>
         <View style={styles.amountColumn}>
           <Text style={styles.amount}>{formatCurrency(transaction.amount, 2)}</Text>
           <View style={styles.rowActions}>
@@ -239,6 +242,7 @@ const styles = StyleSheet.create({
   totalsContext: { color: BudgetColors.faint, fontFamily: Fonts.sans, fontSize: 11 },
   loader: { minHeight: 280, alignItems: 'center', justifyContent: 'center' },
   row: { minHeight: 104, flexDirection: 'row', alignItems: 'flex-start', gap: 12, paddingVertical: 16, borderTopWidth: 1, borderTopColor: BudgetColors.line }, rowFirst: { borderTopWidth: 0 }, rowCompact: { minHeight: 120 },
+  rowContent: { flex: 1, flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
   glyph: { width: 38, height: 38, borderRadius: 7, backgroundColor: BudgetColors.greenSoft, alignItems: 'center', justifyContent: 'center' },
   main: { flex: 1, minWidth: 0, gap: 4 }, titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   name: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 14, fontWeight: '800' },

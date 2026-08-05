@@ -122,7 +122,7 @@ export default function InsightsScreen() {
             ) : (
               <View>
                 {insights.recommendations.map((recommendation, index) => (
-                  <View key={recommendation.category} style={[styles.recommendation, narrow && styles.recommendationNarrow, index === 0 && styles.rowFirst]}>
+                  <Pressable key={recommendation.category} onPress={() => router.push({ pathname: '/transactions', params: { category: recommendation.category } })} style={({ pressed }) => [styles.recommendation, narrow && styles.recommendationNarrow, index === 0 && styles.rowFirst, pressed && styles.pressed]}>
                     <View style={[styles.recommendationIcon, recommendation.direction === 'raise' ? styles.iconAttention : styles.iconOpportunity]}>
                       <SlidersHorizontal color={recommendation.direction === 'raise' ? BudgetColors.coral : BudgetColors.blue} size={17} />
                     </View>
@@ -136,7 +136,7 @@ export default function InsightsScreen() {
                       <Text style={styles.recommendationNumbers}>{formatCurrency(recommendation.avgSpent)} avg spent vs {formatCurrency(recommendation.avgPlanned)} avg planned</Text>
                       <Text style={styles.recommendationDetail}>{recommendation.detail}</Text>
                     </View>
-                  </View>
+                  </Pressable>
                 ))}
               </View>
             )}

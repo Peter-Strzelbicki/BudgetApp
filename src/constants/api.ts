@@ -47,6 +47,7 @@ export interface Transaction {
   recurring_id: number | null;
   is_recurring: boolean;
   transaction_date: string;
+  transaction_time: string | null;
   amount: number;
   location: string | null;
   notes: string | null;
@@ -58,6 +59,7 @@ export interface Transaction {
 export interface TransactionInput {
   subcategory_id: number;
   transaction_date: string;
+  transaction_time?: string;
   amount: number;
   location?: string;
   paid_by_person_id?: number;

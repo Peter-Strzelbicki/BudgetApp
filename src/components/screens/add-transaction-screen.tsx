@@ -1,5 +1,5 @@
 import { router, useLocalSearchParams } from 'expo-router';
-import { AlertTriangle, CalendarDays, CheckCircle2, MapPin, NotebookPen, ReceiptText, Repeat, RotateCcw, UserRound, X } from 'lucide-react-native';
+import { AlertTriangle, CalendarDays, CheckCircle2, Clock, MapPin, NotebookPen, ReceiptText, Repeat, RotateCcw, UserRound, X } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import Animated, { Easing, FadeInDown, FadeOutUp, ReduceMotion, ZoomIn } from 'react-native-reanimated';
@@ -7,6 +7,7 @@ import Animated, { Easing, FadeInDown, FadeOutUp, ReduceMotion, ZoomIn } from 'r
 import { AnimatedHorizontalBar } from '@/components/animated-bar';
 import { ErrorNotice, formatCurrency, Page, PageHeading, Panel, SectionHeader } from '@/components/budget-ui';
 import { DateInput } from '@/components/date-input';
+import { TimeInput } from '@/components/time-input';
 import { addTransaction, BudgetLine, Category, getBudgetLines, getCategories, getPeople, getRecurringTransactions, getSubcategories, getTransaction, getTransactions, Person, RecurringTransaction, Subcategory, Transaction, updateTransaction } from '@/constants/api';
 import { BudgetColors, Fonts } from '@/constants/theme';
 
@@ -20,6 +21,11 @@ const successIconEntrance = ZoomIn.duration(460)
 const toastExit = FadeOutUp.duration(220)
   .easing(Easing.out(Easing.cubic))
   .reduceMotion(ReduceMotion.System);
+
+function nowHHMM() {
+  const n = new Date();
+  return `${String(n.getHours()).padStart(2, '0')}:${String(n.getMinutes()).padStart(2, '0')}`;
+}
 
 export default function AddTransactionScreen() {
   const today = new Date().toISOString().slice(0, 10);
@@ -38,6 +44,7 @@ export default function AddTransactionScreen() {
   const [date, setDate] = useState(today);
   const [location, setLocation] = useState('');
   const [notes, setNotes] = useState('');
+  const [time, setTime] = useState(nowHHMM);
   const [loading, setLoading] = useState(true);
   const [loadingSubs, setLoadingSubs] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -73,6 +80,7 @@ export default function AddTransactionScreen() {
         setDate(transaction.transaction_date.slice(0, 10));
         setLocation(transaction.location || '');
         setNotes(transaction.notes || '');
+        if (transaction.transaction_time) setTime(transaction.transaction_time.slice(0, 5));
       }
     } catch (loadError) { setError(loadError instanceof Error ? loadError.message : 'Form options could not be loaded.'); }
     finally { setLoading(false); }
@@ -123,7 +131,7 @@ export default function AddTransactionScreen() {
       setToastMessage(null);
       return;
     }
-    setCategoryId(null); setSubcategoryId(null); setSubcategories([]); setPersonId(null); setAmount(''); setLocation(''); setNotes(''); setDate(today); setDateInputVersion(current => current + 1); setError(null); setToastMessage(null);
+    setCategoryId(null); setSubcategoryId(null); setSubcategories([]); setPersonId(null); setAmount(''); setLocation(''); setNotes(''); setTime(nowHHMM()); setDate(today); setDateInputVersion(current => current + 1); setError(null); setToastMessage(null);
   };
 
   const applyRecurringMatch = async (match: RecurringTransaction) => {
@@ -149,7 +157,7 @@ export default function AddTransactionScreen() {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00`))) { setError('Enter a valid date in YYYY-MM-DD format.'); return; }
     setSubmitting(true); setError(null); setToastMessage(null);
     try {
-      const payload = { subcategory_id: subcategoryId, transaction_date: date, amount: parsedAmount, location: location.trim() || undefined, paid_by_person_id: personId || undefined, notes: notes.trim() || undefined };
+      const payload = { subcategory_id: subcategoryId, transaction_date: date, transaction_time: time, amount: parsedAmount, location: location.trim() || undefined, paid_by_person_id: personId || undefined, notes: notes.trim() || undefined };
       if (editing) await updateTransaction(transactionId, payload);
       else await addTransaction(payload);
       const [transactionRows, budgetRows] = await Promise.all([
@@ -228,6 +236,9 @@ export default function AddTransactionScreen() {
           <Field icon={<ReceiptText color={BudgetColors.muted} size={17} />} label="Amount" required><View style={styles.amountInput}><Text style={styles.dollar}>$</Text><TextInput value={amount} onChangeText={value => setAmount(sanitizeSignedAmountInput(value))} placeholder="0.00" placeholderTextColor={BudgetColors.faint} keyboardType="decimal-pad" style={styles.flexInput} /></View></Field>
           <Field icon={<CalendarDays color={BudgetColors.muted} size={17} />} label="Date" required>
             <DateInput key={dateInputVersion} value={date} onChange={setDate} />
+          </Field>
+          <Field icon={<Clock color={BudgetColors.muted} size={17} />} label="Time">
+            <TimeInput value={time} onChange={setTime} />
           </Field>
           <Field icon={<MapPin color={BudgetColors.muted} size={17} />} label="Location"><TextInput value={location} onChangeText={setLocation} placeholder="Store or merchant" placeholderTextColor={BudgetColors.faint} maxLength={100} style={styles.input} /></Field>
           {recurringMatch && (

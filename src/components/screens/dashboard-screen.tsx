@@ -1,7 +1,7 @@
 import { router } from 'expo-router';
-import { ArrowRight, Landmark, ReceiptText, WalletCards } from 'lucide-react-native';
+import { ArrowRight, ChevronRight, Landmark } from 'lucide-react-native';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, RefreshControl, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Image, Pressable, RefreshControl, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import { AnimatedHorizontalBar, AnimatedVerticalBar } from '@/components/animated-bar';
 import { EmptyState, ErrorNotice, formatCurrency, Page, PageHeading, Panel, SectionHeader, StatCard, YearSwitcher } from '@/components/budget-ui';
@@ -11,6 +11,18 @@ import { clampToTrackedMonth, getTrackedMonthsForYear, TRACKING_START_YEAR } fro
 import { BudgetColors, Fonts } from '@/constants/theme';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function buildDonutUri(pct: number, isOver: boolean): string {
+  const s = 120, cx = 60, r = 42, sw = 18;
+  const circ = 2 * Math.PI * r;
+  const filled = Math.min(Math.max(pct, 0), 1) * circ;
+  const color = isOver ? '#C85B3F' : '#236B53';
+  const arc = filled > 1
+    ? `<circle cx="${cx}" cy="${cx}" r="${r}" fill="none" stroke="${color}" stroke-width="${sw}" stroke-dasharray="${filled.toFixed(2)} ${(circ - filled).toFixed(2)}" stroke-linecap="round" transform="rotate(-90 ${cx} ${cx})"/>`
+    : '';
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 ${s} ${s}"><circle cx="${cx}" cy="${cx}" r="${r}" fill="none" stroke="#DDE2DC" stroke-width="${sw}"/>${arc}</svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
 
 interface YearlyCategoryAverage {
   category: string;
@@ -151,6 +163,11 @@ export default function DashboardScreen() {
   const varianceByMonth = new Map((ytd?.monthly_variance ?? []).map(row => [row.month, row]));
   const chartMax = Math.max(...totalsByMonth, ...incomeByMonth, ...(ytd?.monthly_variance.filter(row => trackedMonthsForYear.includes(row.month)).map(row => row.planned) ?? []), 1);
   const selectedMonthName = new Date(year, selectedMonth - 1, 1).toLocaleDateString('en-CA', { month: 'long' });
+  const donutDenom = planned > 0 ? planned : monthlyIncome;
+  const donutPct = donutDenom > 0 ? monthSpend / donutDenom : 0;
+  const donutIsOver = planned > 0 && monthSpend > planned;
+  const donutPctDisplay = Math.round(donutPct * 100);
+  const donutDenomLabel = planned > 0 ? 'of plan' : monthlyIncome > 0 ? 'of income' : '';
 
   return (
     <Page refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(true)} tintColor={BudgetColors.green} />}>
@@ -158,21 +175,55 @@ export default function DashboardScreen() {
         eyebrow={`${selectedMonthName} ${year}`}
         title="Household overview"
         description="Select any month below to update spending and budget context."
+        action={<YearSwitcher
+          year={year}
+          previousDisabled={year <= TRACKING_START_YEAR}
+          nextDisabled={year >= currentYear}
+          onPrevious={() => selectYear(year - 1)}
+          onNext={() => selectYear(year + 1)}
+        />}
       />
       {error && <ErrorNotice message={error} onRetry={() => load()} />}
       {monthLoading && <View style={styles.monthLoading}><ActivityIndicator color={BudgetColors.green} size="small" /><Text style={styles.monthLoadingText}>Loading {selectedMonthName}</Text></View>}
       {loading ? <View style={styles.loader}><ActivityIndicator color={BudgetColors.green} size="large" /></View> : (
         <>
           <View style={styles.statsGrid}>
-            <StatCard label={`${selectedMonthName} spending`} value={formatCurrency(monthSpend)} detail={`${transactions.length} recorded transaction${transactions.length === 1 ? '' : 's'}`} icon={<ReceiptText color={BudgetColors.coral} size={19} />} accent={BudgetColors.coral} />
-            <StatCard label={`${selectedMonthName} plan`} value={formatCurrency(planned)} detail={planned > 0 ? `${formatCurrency(Math.abs(remaining))} ${remaining >= 0 ? 'under plan' : 'over plan'}` : 'No plan entered'} icon={<WalletCards color={BudgetColors.green} size={19} />} />
-            <StatCard
-              label={`${year} net`}
-              value={formatCurrency(yearNet)}
-              detail={`${formatCurrency(yearIncome)} income · ${formatCurrency(yearSpend)} spending`}
-              icon={<Landmark color={yearNet >= 0 ? BudgetColors.green : BudgetColors.coral} size={19} />}
-              accent={yearNet >= 0 ? BudgetColors.green : BudgetColors.coral}
-            />
+            <Pressable onPress={() => router.push({ pathname: '/transactions', params: { month: String(selectedMonth), year: String(year) } })} style={({ pressed }) => [styles.donutCard, pressed && styles.pressed]}>
+              <Text style={styles.donutCardLabel}>{selectedMonthName} budget</Text>
+              <View style={styles.donutBody}>
+                <View style={styles.donutWrap}>
+                  <Image source={{ uri: buildDonutUri(donutPct, donutIsOver) }} style={styles.donutImage} />
+                  <View style={styles.donutCenter}>
+                    <Text style={[styles.donutPct, donutIsOver && styles.donutOver]}>{donutPctDisplay}%</Text>
+                    {donutDenomLabel !== '' && <Text style={styles.donutPctSub}>{donutDenomLabel}</Text>}
+                  </View>
+                </View>
+                <View style={styles.donutStats}>
+                  <View>
+                    <Text style={styles.donutStatLabel}>SPENT</Text>
+                    <Text style={styles.donutStatValue}>{formatCurrency(monthSpend)}</Text>
+                    <Text style={styles.donutStatDetail}>{transactions.length} transaction{transactions.length === 1 ? '' : 's'}</Text>
+                  </View>
+                  <View style={styles.donutDivider} />
+                  <View>
+                    <Text style={styles.donutStatLabel}>PLAN</Text>
+                    <Text style={styles.donutStatValue}>{formatCurrency(planned)}</Text>
+                    {planned > 0
+                      ? <Text style={[styles.donutStatDetail, donutIsOver && styles.donutOver]}>{formatCurrency(Math.abs(remaining))} {remaining >= 0 ? 'remaining' : 'over plan'}</Text>
+                      : <Text style={styles.donutStatDetail}>No plan entered</Text>}
+                  </View>
+                </View>
+              </View>
+            </Pressable>
+            <Pressable onPress={() => router.push('/savings' as any)} style={({ pressed }) => [styles.netCard, pressed && styles.pressed]}>
+              <StatCard
+                label={`${year} net`}
+                value={formatCurrency(yearNet)}
+                detail={`${formatCurrency(yearIncome)} income · ${formatCurrency(yearSpend)} spending`}
+                icon={<Landmark color={yearNet >= 0 ? BudgetColors.green : BudgetColors.coral} size={19} />}
+                accent={yearNet >= 0 ? BudgetColors.green : BudgetColors.coral}
+              />
+            </Pressable>
           </View>
 
           {monthlyIncome > 0 && (
@@ -265,7 +316,7 @@ export default function DashboardScreen() {
                     const underBudget = month.variance >= 0;
                     const noActivity = month.planned === 0 && month.actual === 0;
                     return (
-                      <View key={month.month} style={[styles.varianceRow, index === 0 && styles.varianceRowFirst]}>
+                      <Pressable key={month.month} onPress={() => router.push({ pathname: '/transactions', params: { month: String(month.month), year: String(year) } })} style={({ pressed }) => [styles.varianceRow, index === 0 && styles.varianceRowFirst, pressed && styles.pressed]}>
                         <View style={[styles.varianceDot, noActivity ? styles.varianceDotIdle : underBudget ? styles.varianceDotUnder : styles.varianceDotOver]} />
                         <View style={styles.varianceCopy}>
                           <Text style={styles.varianceMonth}>{MONTHS[month.month - 1]}</Text>
@@ -274,7 +325,8 @@ export default function DashboardScreen() {
                         <Text style={[styles.varianceAmount, !noActivity && (underBudget ? styles.varianceUnder : styles.varianceOver)]}>
                           {noActivity ? 'No activity' : `${formatCurrency(Math.abs(month.variance))} ${underBudget ? 'under' : 'over'}`}
                         </Text>
-                      </View>
+                        <ChevronRight color={BudgetColors.faint} size={14} />
+                      </Pressable>
                     );
                   })}
                 </View>
@@ -288,7 +340,7 @@ export default function DashboardScreen() {
               const variance = category.avgPlanned - category.avgSpent;
               const underPlan = variance >= 0;
               const noActivity = category.avgPlanned === 0 && category.avgSpent === 0;
-              return <View key={category.category} style={[styles.categoryAverageRow, index === 0 && styles.categoryAverageRowFirst]}>
+              return <Pressable key={category.category} onPress={() => router.push({ pathname: '/transactions', params: { month: String(selectedMonth), year: String(year), category: category.category } })} style={({ pressed }) => [styles.categoryAverageRow, index === 0 && styles.categoryAverageRowFirst, pressed && styles.pressed]}>
                 <View style={[styles.categoryAverageDot, noActivity ? styles.categoryAverageDotIdle : underPlan ? styles.categoryAverageDotUnder : styles.categoryAverageDotOver]} />
                 <View style={styles.categoryAverageCopy}>
                   <Text style={styles.categoryAverageName}>{category.category}</Text>
@@ -297,7 +349,8 @@ export default function DashboardScreen() {
                 <Text style={[styles.categoryAverageVariance, !noActivity && (underPlan ? styles.varianceUnder : styles.varianceOver)]}>
                   {noActivity ? 'No activity' : `${formatCurrency(Math.abs(variance))} ${underPlan ? 'under' : 'over'}`}
                 </Text>
-              </View>;
+                <ChevronRight color={BudgetColors.faint} size={14} />
+              </Pressable>;
             })}
           </Panel>
         </>
@@ -339,6 +392,7 @@ function buildYearlyCategoryAverages(categoryRowsByMonth: CategorySummary[][], b
 }
 
 const styles = StyleSheet.create({
+  netCard: { flex: 1 },
   headingActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 10, flexWrap: 'wrap' },
   primaryButton: { minHeight: 42, paddingHorizontal: 15, borderRadius: 8, backgroundColor: BudgetColors.green, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   primaryButtonText: { color: BudgetColors.surface, fontFamily: Fonts.sans, fontSize: 13, fontWeight: '800' },
@@ -409,4 +463,18 @@ const styles = StyleSheet.create({
   categoryAverageName: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' },
   categoryAverageDetail: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 9 },
   categoryAverageVariance: { color: BudgetColors.faint, fontFamily: Fonts.sans, fontSize: 10, fontWeight: '800', textAlign: 'right' },
+  donutCard: { flex: 2, minWidth: 200, borderRadius: 8, borderWidth: 1, borderColor: BudgetColors.line, backgroundColor: BudgetColors.surface, padding: 17, gap: 10 },
+  donutCardLabel: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 10, fontWeight: '800' },
+  donutBody: { flexDirection: 'row', alignItems: 'center', gap: 16 },
+  donutWrap: { position: 'relative', width: 120, height: 120 },
+  donutImage: { width: 120, height: 120 },
+  donutCenter: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' },
+  donutPct: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 20, fontWeight: '800' },
+  donutPctSub: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 9, fontWeight: '700' },
+  donutOver: { color: BudgetColors.coral },
+  donutStats: { flex: 1, gap: 8 },
+  donutStatLabel: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 9, fontWeight: '800' },
+  donutStatValue: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 16, fontWeight: '800' },
+  donutStatDetail: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11 },
+  donutDivider: { height: 1, backgroundColor: BudgetColors.line },
 });

@@ -1,3 +1,4 @@
+import { router } from 'expo-router';
 import { Copy, Pencil, Plus, Save, Trash2, X } from 'lucide-react-native';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
@@ -212,11 +213,14 @@ export default function BudgetScreen() {
                     : <Trash2 color={BudgetColors.coral} size={17} />}
                 </Pressable>
               )}
-              <View style={styles.lineCopy}>
+              <Pressable
+                disabled={managing}
+                onPress={() => router.push({ pathname: '/transactions', params: { month: String(month), year: String(year), category: line.category } })}
+                style={({ pressed }) => [styles.lineCopy, !managing && pressed && styles.pressed]}>
                 <Text style={styles.lineName}>{line.subcategory}</Text>
                 {!managing && <Text style={[styles.lineActual, overBudget && styles.over]}>{formatCurrency(line.actual_amount, 2)} spent{overBudget ? ' • Over budget' : ''}</Text>}
                 {!managing && <View style={styles.progress}><AnimatedHorizontalBar delay={index * 25} percent={percent} style={[styles.progressFill, overBudget && styles.progressOver]} /></View>}
-              </View>
+              </Pressable>
               {!managing && (
                 <View style={styles.inputWrap}>
                   <Text style={styles.currency}>$</Text>
