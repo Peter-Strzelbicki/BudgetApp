@@ -746,12 +746,20 @@ export interface RecurringTransaction {
   is_active: boolean;
 }
 
+export interface RecurringTransactionForMonth extends RecurringTransaction {
+  applied_this_month: boolean;
+}
+
 export function getRecurringTransactions() {
   return requestJson<RecurringTransaction[]>('/recurring-transactions');
 }
 
 export function getPendingRecurring(month: number, year: number) {
   return requestJson<{ pending: number }>(`/recurring-transactions/pending?month=${month}&year=${year}`);
+}
+
+export function getPendingRecurringList(month: number, year: number) {
+  return requestJson<RecurringTransactionForMonth[]>(`/recurring-transactions/pending-list?month=${month}&year=${year}`);
 }
 
 export function createRecurringTransaction(data: {
@@ -787,11 +795,11 @@ export function deleteRecurringTransaction(recurringId: number) {
   return requestJson<{ recurring_id: number }>(`/recurring-transactions/${recurringId}`, { method: 'DELETE' }, 1);
 }
 
-export function applyRecurringTransactions(month: number, year: number) {
+export function applyRecurringTransactions(month: number, year: number, recurringIds?: number[]) {
   return requestJson<{ applied: number; transactions_created: number[] }>('/recurring-transactions/apply', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ month, year }),
+    body: JSON.stringify(recurringIds ? { month, year, recurring_ids: recurringIds } : { month, year }),
   }, 1);
 }
 

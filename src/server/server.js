@@ -1375,6 +1375,36 @@ app.get("/recurring-transactions/pending", async (req, res) => {
   }
 });
 
+app.get("/recurring-transactions/pending-list", async (req, res) => {
+  try {
+    const period = readMonthYear(req, res);
+    if (!period) return;
+    const prefix = dbType === "postgres" ? "public" : "dbo";
+    const isActiveExpr = dbType === "postgres" ? "rt.is_active = TRUE" : "rt.is_active = 1";
+    const appliedExpr = dbType === "postgres"
+      ? `EXISTS (SELECT 1 FROM ${prefix}.recurring_applied ra WHERE ra.recurring_id = rt.recurring_id AND ra.month = @month AND ra.year = @year)`
+      : `CASE WHEN EXISTS (SELECT 1 FROM ${prefix}.recurring_applied ra WHERE ra.recurring_id = rt.recurring_id AND ra.month = @month AND ra.year = @year) THEN 1 ELSE 0 END`;
+    const rows = await query(
+      `SELECT rt.recurring_id, rt.subcategory_id, rt.amount, rt.location,
+              rt.paid_by_person_id, rt.notes, rt.day_of_month, rt.is_active,
+              sc.name AS subcategory, c.name AS category, p.name AS paid_by,
+              ${appliedExpr} AS applied_this_month
+       FROM ${prefix}.recurring_transactions rt
+       JOIN ${prefix}.subcategories sc ON sc.subcategory_id = rt.subcategory_id
+       JOIN ${prefix}.categories c ON c.category_id = sc.category_id
+       LEFT JOIN ${prefix}.people p ON p.person_id = rt.paid_by_person_id
+       WHERE ${isActiveExpr}
+       ORDER BY rt.day_of_month, rt.recurring_id`,
+      period
+    );
+    // Normalise the boolean for both Postgres (native bool) and MSSQL (1/0)
+    res.json(rows.map(r => ({ ...r, applied_this_month: Boolean(r.applied_this_month) })));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to fetch recurring list" });
+  }
+});
+
 app.post("/recurring-transactions", async (req, res) => {
   try {
     const { subcategory_id, amount, location, paid_by_person_id, notes, day_of_month } = req.body;
@@ -1457,12 +1487,13 @@ app.post("/recurring-transactions/apply", async (req, res) => {
   try {
     const month = Number(req.body.month);
     const year = Number(req.body.year);
+    const recurringIds = req.body.recurring_ids;
     if (!Number.isInteger(month) || month < 1 || month > 12 || !Number.isInteger(year)) {
       return res.status(400).json({ error: "A valid month and year are required" });
     }
     const prefix = dbType === "postgres" ? "public" : "dbo";
     const isActiveExpr = dbType === "postgres" ? "is_active = TRUE" : "is_active = 1";
-    const pending = await query(
+    let pending = await query(
       `SELECT rt.recurring_id, rt.subcategory_id, rt.amount, rt.location,
               rt.paid_by_person_id, rt.notes, rt.day_of_month
        FROM ${prefix}.recurring_transactions rt
@@ -1474,6 +1505,11 @@ app.post("/recurring-transactions/apply", async (req, res) => {
          )`,
       { month, year }
     );
+
+    if (Array.isArray(recurringIds) && recurringIds.length > 0) {
+      const allowed = new Set(recurringIds.map(Number));
+      pending = pending.filter(rt => allowed.has(Number(rt.recurring_id)));
+    }
 
     const daysInMonth = new Date(year, month, 0).getDate();
     const created = [];

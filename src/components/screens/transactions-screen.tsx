@@ -5,7 +5,7 @@ import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, TextIn
 
 import { AnimatedHorizontalBar } from '@/components/animated-bar';
 import { EmptyState, ErrorNotice, formatCurrency, MonthSwitcher, moveMonth, Page, PageHeading, Panel, SectionHeader, AnimatedIconButton } from '@/components/budget-ui';
-import { applyRecurringTransactions, BudgetLine, ContributionSummary, deleteTransaction, getBudgetLines, getContributionSummary, getPendingRecurring, getTransactions, Transaction } from '@/constants/api';
+import { applyRecurringTransactions, BudgetLine, ContributionSummary, deleteTransaction, getBudgetLines, getContributionSummary, getPendingRecurring, getPendingRecurringList, getTransactions, RecurringTransaction, RecurringTransactionForMonth, Transaction } from '@/constants/api';
 import { TRACKING_START_MONTH, TRACKING_START_YEAR } from '@/constants/tracking-period';
 import { BudgetColors, Fonts } from '@/constants/theme';
 
@@ -25,6 +25,10 @@ export default function TransactionsScreen() {
   const [contribution, setContribution] = useState<ContributionSummary | null>(null);
   const [budgetLines, setBudgetLines] = useState<BudgetLine[]>([]);
   const [categoryFilter, setCategoryFilter] = useState(() => params.category ?? 'All');
+  const [showRecurringPicker, setShowRecurringPicker] = useState(false);
+  const [pendingList, setPendingList] = useState<RecurringTransactionForMonth[]>([]);
+  const [pendingListLoading, setPendingListLoading] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
 
   const load = async () => {
     setLoading(true); setError(null);
@@ -70,14 +74,42 @@ export default function TransactionsScreen() {
   const applyRecurring = async () => {
     setApplying(true); setError(null);
     try {
-      const result = await applyRecurringTransactions(month, year);
+      const ids = selectedIds.size > 0 ? Array.from(selectedIds) : undefined;
+      const result = await applyRecurringTransactions(month, year, ids);
       if (result.applied > 0) {
         const [txRows, pending] = await Promise.all([getTransactions(month, year), getPendingRecurring(month, year)]);
         setTransactions(txRows); setPendingRecurring(pending.pending);
       }
+      setShowRecurringPicker(false); setPendingList([]); setSelectedIds(new Set());
     } catch (applyError) {
       setError(applyError instanceof Error ? applyError.message : 'Could not apply recurring transactions.');
     } finally { setApplying(false); }
+  };
+
+  const openRecurringPicker = async () => {
+    if (showRecurringPicker) { setShowRecurringPicker(false); return; }
+    setShowRecurringPicker(true); setPendingListLoading(true);
+    try {
+      const items = await getPendingRecurringList(month, year);
+      setPendingList(items);
+      // pre-select only the items not yet applied this month
+      setSelectedIds(new Set(items.filter(rt => !rt.applied_this_month).map(rt => rt.recurring_id)));
+    } catch { setError('Could not load recurring items.'); setShowRecurringPicker(false); }
+    finally { setPendingListLoading(false); }
+  };
+
+  const toggleItem = (id: number) => setSelectedIds(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  const toggleAll = () => {
+    const pendingIds = pendingList.filter(rt => !rt.applied_this_month).map(rt => rt.recurring_id);
+    setSelectedIds(selectedIds.size === pendingIds.length && pendingIds.every(id => selectedIds.has(id))
+      ? new Set()
+      : new Set(pendingIds)
+    );
   };
 
   const categories = ['All', ...Array.from(new Set(transactions.map(transaction => transaction.category))).sort((a, b) => a.localeCompare(b))];
@@ -108,16 +140,65 @@ export default function TransactionsScreen() {
   const showSummaryBar = isAllCategories ? monthlyIncome > 0 : true;
 
   return <Page>
-    <PageHeading eyebrow="Ledger" title="Transactions" description="Search, review, and maintain the household spending record." action={<Pressable onPress={() => router.push('/add-transaction')} style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}><Plus color={BudgetColors.surface} size={17} /><Text style={styles.primaryText}>Add transaction</Text></Pressable>} />
+    <PageHeading eyebrow="Ledger" title="Transactions" description="Search, review, and maintain the household spending record." action={
+      <View style={styles.headingActions}>
+        <Pressable onPress={openRecurringPicker} style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}>
+          <Repeat color={BudgetColors.green} size={16} />
+          <Text style={styles.secondaryButtonText}>{pendingRecurring > 0 ? `${pendingRecurring} recurring` : 'Apply recurring'}</Text>
+        </Pressable>
+        <Pressable onPress={() => router.push('/add-transaction')} style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}>
+          <Plus color={BudgetColors.surface} size={17} />
+          <Text style={styles.primaryText}>Add transaction</Text>
+        </Pressable>
+      </View>
+    } />
     {error && <ErrorNotice message={error} onRetry={load} />}
-    {pendingRecurring > 0 && (
-      <Pressable disabled={applying} onPress={applyRecurring} style={({ pressed }) => [styles.recurringBanner, applying && styles.disabled, pressed && styles.pressed]}>
-        <Repeat color={BudgetColors.green} size={17} />
-        <Text style={styles.recurringBannerText}>
-          {applying ? 'Applying…' : `Apply ${pendingRecurring} recurring transaction${pendingRecurring === 1 ? '' : 's'} for this month`}
-        </Text>
-        {applying && <ActivityIndicator color={BudgetColors.green} size="small" />}
-      </Pressable>
+    {showRecurringPicker && (
+      <View style={styles.recurringPickerBody}>
+        {pendingListLoading ? (
+          <View style={styles.recurringPickerLoading}><ActivityIndicator color={BudgetColors.green} size="small" /></View>
+        ) : (
+          <>
+            {(() => {
+              const pending = pendingList.filter(rt => !rt.applied_this_month);
+              const allPendingSelected = pending.length > 0 && pending.every(rt => selectedIds.has(rt.recurring_id));
+              return (
+                <Pressable onPress={toggleAll} style={({ pressed }) => [styles.recurringPickerSelectAll, pressed && styles.pressed]}>
+                  <View style={[styles.recurringCheck, allPendingSelected && styles.recurringCheckSelected]} />
+                  <Text style={styles.recurringPickerSelectAllText}>
+                    {allPendingSelected ? `Deselect all pending (${pending.length})` : `Select all pending (${pending.length})`}
+                  </Text>
+                </Pressable>
+              );
+            })()}
+            {pendingList.map((rt, index) => (
+              <Pressable
+                key={rt.recurring_id}
+                disabled={rt.applied_this_month}
+                onPress={() => toggleItem(rt.recurring_id)}
+                style={({ pressed }) => [styles.recurringPickerItem, index === 0 && styles.recurringPickerItemFirst, selectedIds.has(rt.recurring_id) && styles.recurringPickerItemSelected, rt.applied_this_month && styles.recurringPickerItemApplied, pressed && !rt.applied_this_month && styles.pressed]}>
+                <View style={[styles.recurringCheck, (selectedIds.has(rt.recurring_id) || rt.applied_this_month) && styles.recurringCheckSelected, rt.applied_this_month && styles.recurringCheckApplied]} />
+                <View style={styles.recurringPickerItemCopy}>
+                  <Text style={[styles.recurringPickerItemName, rt.applied_this_month && styles.recurringPickerItemAppliedText]} numberOfLines={1}>{rt.location || rt.subcategory}</Text>
+                  <Text style={styles.recurringPickerItemMeta}>{rt.category} · day {rt.day_of_month}{rt.paid_by ? ` · ${rt.paid_by}` : ''}{rt.applied_this_month ? ' · Applied' : ''}</Text>
+                </View>
+                <Text style={[styles.recurringPickerItemAmount, rt.applied_this_month && styles.recurringPickerItemAppliedText]}>{formatCurrency(rt.amount, 2)}</Text>
+              </Pressable>
+            ))}
+            <Pressable
+              disabled={selectedIds.size === 0 || applying}
+              onPress={applyRecurring}
+              style={({ pressed }) => [styles.recurringApplyBtn, (selectedIds.size === 0 || applying) && styles.disabled, pressed && styles.pressed]}>
+              {applying
+                ? <ActivityIndicator color={BudgetColors.surface} size="small" />
+                : <Repeat color={BudgetColors.surface} size={15} />}
+              <Text style={styles.recurringApplyText}>
+                {applying ? 'Applying…' : `Apply ${selectedIds.size} selected`}
+              </Text>
+            </Pressable>
+          </>
+        )}
+      </View>
     )}
     <View style={styles.controls}>
       <MonthSwitcher month={month} year={year} onPrevious={() => changeMonth(-1)} onNext={() => changeMonth(1)} />
@@ -215,8 +296,30 @@ function confirmRemoval(transaction: Transaction) {
 const styles = StyleSheet.create({
   primaryButton: { height: 42, paddingHorizontal: 15, borderRadius: 8, backgroundColor: BudgetColors.green, flexDirection: 'row', alignItems: 'center', gap: 7 },
   primaryText: { color: BudgetColors.surface, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' }, pressed: { opacity: 0.68 }, disabled: { opacity: 0.6 },
+  headingActions: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' },
+  secondaryButton: { height: 42, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: BudgetColors.green, backgroundColor: BudgetColors.greenSoft, flexDirection: 'row', alignItems: 'center', gap: 7 },
+  secondaryButtonText: { color: BudgetColors.green, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' },
   recurringBanner: { minHeight: 46, paddingHorizontal: 14, borderRadius: 8, borderWidth: 1, borderColor: BudgetColors.green, backgroundColor: BudgetColors.greenSoft, flexDirection: 'row', alignItems: 'center', gap: 10 },
   recurringBannerText: { flex: 1, color: BudgetColors.green, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' },
+  recurringPickerBody: { borderWidth: 1, borderColor: BudgetColors.green, borderRadius: 8, backgroundColor: BudgetColors.surface, overflow: 'hidden' },
+  recurringPickerLoading: { minHeight: 60, alignItems: 'center', justifyContent: 'center', padding: 14 },
+  recurringPickerEmptyText: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 12, textAlign: 'center' },
+  recurringPickerSelectAll: { minHeight: 44, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 12, borderBottomWidth: 1, borderBottomColor: BudgetColors.line },
+  recurringPickerSelectAllText: { flex: 1, color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' },
+  recurringCheck: { width: 16, height: 16, borderRadius: 4, borderWidth: 2, borderColor: BudgetColors.line, backgroundColor: BudgetColors.canvas },
+  recurringCheckSelected: { borderColor: BudgetColors.green, backgroundColor: BudgetColors.green },
+  recurringPickerItem: { minHeight: 52, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 12, borderTopWidth: 1, borderTopColor: BudgetColors.line },
+  recurringPickerItemFirst: { borderTopWidth: 0 },
+  recurringPickerItemSelected: { backgroundColor: BudgetColors.greenSoft },
+  recurringPickerItemCopy: { flex: 1, minWidth: 0, gap: 2 },
+  recurringPickerItemName: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 13, fontWeight: '800' },
+  recurringPickerItemMeta: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11 },
+  recurringPickerItemAmount: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 13, fontWeight: '800' },
+  recurringPickerItemApplied: { opacity: 0.5 },
+  recurringPickerItemAppliedText: { color: BudgetColors.muted },
+  recurringCheckApplied: { borderColor: BudgetColors.muted, backgroundColor: BudgetColors.muted },
+  recurringApplyBtn: { minHeight: 46, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: BudgetColors.green, borderTopWidth: 1, borderTopColor: BudgetColors.successLine },
+  recurringApplyText: { color: BudgetColors.surface, fontFamily: Fonts.sans, fontSize: 13, fontWeight: '800' },
   controls: { flexDirection: 'row', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' },
   searchWrap: { height: 42, minWidth: 240, flex: 1, maxWidth: 390, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: BudgetColors.line, borderRadius: 8, backgroundColor: BudgetColors.surface },
   searchInput: { flex: 1, height: 40, color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 13 },
