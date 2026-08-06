@@ -3,11 +3,11 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 
 import { AnimatedHorizontalBar } from '@/components/animated-bar';
-import { EmptyState, ErrorNotice, formatCurrency, MonthSwitcher, moveMonth, Page, PageHeading, Panel, SectionHeader } from '@/components/budget-ui';
+import { EmptyState, ErrorNotice, formatCurrency, MonthSwitcher, moveMonth, Page, PageHeading, Panel, SectionHeader, StickyControlRow } from '@/components/budget-ui';
 import { DateInput } from '@/components/date-input';
 import { addExtraIncome, addJointPayment, ContributionSummary, deleteExtraIncome, deleteJointPayment, ExtraIncome, getContributionSummary, getExtraIncome, getIncomeConfig, getIncomeSummary, getJointPayments, IncomeConfig, IncomeMonthSummary, JointPayment, saveIncomeConfig } from '@/constants/api';
-import { TRACKING_START_MONTH, TRACKING_START_YEAR } from '@/constants/tracking-period';
 import { BudgetColors, Fonts } from '@/constants/theme';
+import { TRACKING_START_MONTH, TRACKING_START_YEAR } from '@/constants/tracking-period';
 
 export default function AddPaycheckScreen() {
   const now = new Date();
@@ -213,8 +213,10 @@ export default function AddPaycheckScreen() {
         eyebrow="Configuration"
         title="Income"
         description="Set regular bi-weekly pay, payday schedules, and payments to the joint account."
-        action={<MonthSwitcher month={month} year={year} onPrevious={() => changeMonth(-1)} onNext={() => changeMonth(1)} />}
       />
+      <StickyControlRow>
+        <MonthSwitcher month={month} year={year} onPrevious={() => changeMonth(-1)} onNext={() => changeMonth(1)} sticky />
+      </StickyControlRow>
       {error && <ErrorNotice message={error} onRetry={undefined} />}
 
       <Panel style={styles.monthlyIncomePanel}>

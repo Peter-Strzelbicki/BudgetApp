@@ -1,20 +1,20 @@
 import { Pencil, Plus, ReceiptText, Repeat, Save, Trash2, X } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 
-import { EmptyState, ErrorNotice, formatCurrency, Page, PageHeading, Panel, SectionHeader, AnimatedIconButton } from '@/components/budget-ui';
+import { AnimatedIconButton, EmptyState, ErrorNotice, formatCurrency, Page, PageHeading, Panel, SectionHeader, useConfirm } from '@/components/budget-ui';
 import {
-  Category,
-  createRecurringTransaction,
-  deleteRecurringTransaction,
-  getCategories,
-  getPeople,
-  getRecurringTransactions,
-  getSubcategories,
-  Person,
-  RecurringTransaction,
-  Subcategory,
-  updateRecurringTransaction,
+    Category,
+    createRecurringTransaction,
+    deleteRecurringTransaction,
+    getCategories,
+    getPeople,
+    getRecurringTransactions,
+    getSubcategories,
+    Person,
+    RecurringTransaction,
+    Subcategory,
+    updateRecurringTransaction,
 } from '@/constants/api';
 import { BudgetColors, Fonts } from '@/constants/theme';
 
@@ -35,6 +35,7 @@ const EMPTY_FORM: FormState = {
 
 export default function RecurringScreen() {
   const compact = useWindowDimensions().width < 720;
+  const confirm = useConfirm();
   const [recurring, setRecurring] = useState<RecurringTransaction[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [subcategories, setSubcategories] = useState<Subcategory[]>([]);
@@ -108,9 +109,12 @@ export default function RecurringScreen() {
 
   const remove = async (rt: RecurringTransaction) => {
     const name = rt.location || rt.subcategory;
-    const confirmed = Platform.OS === 'web' && typeof window !== 'undefined'
-      ? window.confirm(`Remove recurring "${name}"? Previously applied transactions are kept.`)
-      : await new Promise<boolean>(resolve => Alert.alert('Remove recurring?', `"${name}" · Previously applied transactions will not be affected.`, [{ text: 'Cancel', style: 'cancel', onPress: () => resolve(false) }, { text: 'Remove', style: 'destructive', onPress: () => resolve(true) }], { cancelable: true, onDismiss: () => resolve(false) }));
+    const confirmed = await confirm({
+      title: 'Remove recurring?',
+      message: `"${name}" · Previously applied transactions will not be affected.`,
+      confirmLabel: 'Remove',
+      destructive: true,
+    });
     if (!confirmed) return;
     setDeletingId(rt.recurring_id); setError(null);
     try {

@@ -3,6 +3,7 @@ import * as SplashScreen from 'expo-splash-screen';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { AppShell } from '@/components/app-shell';
+import { ConfirmProvider } from '@/components/budget-ui';
 import { BudgetColors } from '@/constants/theme';
 import { BudgetThemeProvider } from '@/hooks/use-budget-theme';
 
@@ -25,14 +26,16 @@ export default function RootLayout() {
     <BudgetThemeProvider>
       <ThemeProvider value={theme}>
         <AnimatedSplashOverlay />
-        <AppShell>
-          <Stack
-            screenOptions={{
-              headerShown: false,
-              contentStyle: { backgroundColor: BudgetColors.canvas },
-            }}
-          />
-        </AppShell>
+        <ConfirmProvider>
+          <AppShell>
+            <Stack
+              screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: BudgetColors.canvas },
+              }}
+            />
+          </AppShell>
+        </ConfirmProvider>
       </ThemeProvider>
     </BudgetThemeProvider>
   );

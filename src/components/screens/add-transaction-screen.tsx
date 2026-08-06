@@ -29,10 +29,13 @@ function nowHHMM() {
 
 export default function AddTransactionScreen() {
   const today = new Date().toISOString().slice(0, 10);
-  const params = useLocalSearchParams<{ transactionId?: string }>();
+  const params = useLocalSearchParams<{ transactionId?: string; duplicateOf?: string }>();
   const transactionIdValue = Array.isArray(params.transactionId) ? params.transactionId[0] : params.transactionId;
   const transactionId = Number(transactionIdValue);
   const editing = Number.isInteger(transactionId) && transactionId > 0;
+  const duplicateOfValue = Array.isArray(params.duplicateOf) ? params.duplicateOf[0] : params.duplicateOf;
+  const duplicateOfId = Number(duplicateOfValue);
+  const duplicating = !editing && Number.isInteger(duplicateOfId) && duplicateOfId > 0;
   const compact = useWindowDimensions().width < 720;
   const [categories, setCategories] = useState<Category[]>([]);
   const [subcategories, setSubcategories] = useState<Subcategory[]>([]);
@@ -61,10 +64,11 @@ export default function AddTransactionScreen() {
   const loadReferenceData = async () => {
     setLoading(true); setError(null);
     try {
-      const [categoryRows, peopleRows, transaction, transactionRows, recurringRows] = await Promise.all([
+      const [categoryRows, peopleRows, transaction, duplicateSource, transactionRows, recurringRows] = await Promise.all([
         getCategories(),
         getPeople(),
         editing ? getTransaction(transactionId) : Promise.resolve(null),
+        duplicating ? getTransaction(duplicateOfId) : Promise.resolve(null),
         getTransactions(),
         getRecurringTransactions(),
       ]);
@@ -81,11 +85,19 @@ export default function AddTransactionScreen() {
         setLocation(transaction.location || '');
         setNotes(transaction.notes || '');
         if (transaction.transaction_time) setTime(transaction.transaction_time.slice(0, 5));
+      } else if (duplicateSource) {
+        setCategoryId(duplicateSource.category_id);
+        setSubcategoryId(duplicateSource.subcategory_id);
+        setSubcategories(await getSubcategories(duplicateSource.category_id));
+        setPersonId(duplicateSource.paid_by_person_id);
+        setAmount(String(duplicateSource.amount));
+        setLocation(duplicateSource.location || '');
+        setNotes(duplicateSource.notes || '');
       }
     } catch (loadError) { setError(loadError instanceof Error ? loadError.message : 'Form options could not be loaded.'); }
     finally { setLoading(false); }
   };
-  useEffect(() => { loadReferenceData(); }, [transactionIdValue]);
+  useEffect(() => { loadReferenceData(); }, [transactionIdValue, duplicateOfValue]);
 
   useEffect(() => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
@@ -221,7 +233,7 @@ export default function AddTransactionScreen() {
   const duplicatesToday = recentDuplicates.filter(t => t.transaction_date.slice(0, 10) === today);
 
   return <Page>
-    <PageHeading eyebrow={editing ? 'Ledger entry' : 'New entry'} title={editing ? 'Edit transaction' : 'Record a transaction'} description={editing ? 'Update the expense details, classification, or payer.' : 'Add an expense to the household ledger and monthly totals.'} />
+    <PageHeading eyebrow={editing ? 'Ledger entry' : duplicating ? 'Duplicated entry' : 'New entry'} title={editing ? 'Edit transaction' : 'Record a transaction'} description={editing ? 'Update the expense details, classification, or payer.' : duplicating ? 'Details copied from the original entry — update the date, time, or amount as needed.' : 'Add an expense to the household ledger and monthly totals.'} />
     {error && <ErrorNotice message={error} onRetry={loading ? loadReferenceData : undefined} />}
     {loading ? <View style={styles.loader}><ActivityIndicator color={BudgetColors.green} size="large" /></View> : <>
       <Panel>

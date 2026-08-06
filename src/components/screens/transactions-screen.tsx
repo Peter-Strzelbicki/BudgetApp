@@ -1,17 +1,28 @@
-import { useFocusEffect, useLocalSearchParams, router } from 'expo-router';
-import { MapPin, Pencil, Plus, ReceiptText, Repeat, Search, Trash2, UserRound } from 'lucide-react-native';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { ArrowUpDown, Copy, MapPin, Pencil, Plus, ReceiptText, Repeat, Search, Trash2, UserRound } from 'lucide-react-native';
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 
 import { AnimatedHorizontalBar } from '@/components/animated-bar';
-import { EmptyState, ErrorNotice, formatCurrency, MonthSwitcher, moveMonth, Page, PageHeading, Panel, SectionHeader, AnimatedIconButton } from '@/components/budget-ui';
-import { applyRecurringTransactions, BudgetLine, ContributionSummary, deleteTransaction, getBudgetLines, getContributionSummary, getPendingRecurring, getPendingRecurringList, getTransactions, RecurringTransaction, RecurringTransactionForMonth, Transaction } from '@/constants/api';
-import { TRACKING_START_MONTH, TRACKING_START_YEAR } from '@/constants/tracking-period';
+import { AnimatedIconButton, EmptyState, ErrorNotice, formatCurrency, MonthSwitcher, moveMonth, Page, PageHeading, Panel, SectionHeader, useConfirm } from '@/components/budget-ui';
+import { applyRecurringTransactions, BudgetLine, ContributionSummary, deleteTransaction, getBudgetLines, getContributionSummary, getPendingRecurring, getPendingRecurringList, getTransactions, RecurringTransactionForMonth, Transaction } from '@/constants/api';
 import { BudgetColors, Fonts } from '@/constants/theme';
+import { TRACKING_START_MONTH, TRACKING_START_YEAR } from '@/constants/tracking-period';
+
+type SortKey = 'date-desc' | 'date-asc' | 'amount-desc' | 'amount-asc' | 'category';
+
+const SORT_OPTIONS: { key: SortKey; label: string }[] = [
+  { key: 'date-desc', label: 'Newest first' },
+  { key: 'date-asc', label: 'Oldest first' },
+  { key: 'amount-desc', label: 'Amount: high to low' },
+  { key: 'amount-asc', label: 'Amount: low to high' },
+  { key: 'category', label: 'Category A\u2013Z' },
+];
 
 export default function TransactionsScreen() {
   const now = new Date();
   const compact = useWindowDimensions().width < 720;
+  const confirm = useConfirm();
   const params = useLocalSearchParams<{ month?: string; year?: string; category?: string }>();
   const [month, setMonth] = useState(() => params.month ? Number(params.month) : now.getMonth() + 1);
   const [year, setYear] = useState(() => params.year ? Number(params.year) : now.getFullYear());
@@ -29,6 +40,8 @@ export default function TransactionsScreen() {
   const [pendingList, setPendingList] = useState<RecurringTransactionForMonth[]>([]);
   const [pendingListLoading, setPendingListLoading] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [sortBy, setSortBy] = useState<SortKey>('date-desc');
+  const [showSortMenu, setShowSortMenu] = useState(false);
 
   const load = async () => {
     setLoading(true); setError(null);
@@ -60,7 +73,13 @@ export default function TransactionsScreen() {
   };
 
   const remove = async (transaction: Transaction) => {
-    const confirmed = await confirmRemoval(transaction);
+    const name = transaction.location || transaction.subcategory;
+    const confirmed = await confirm({
+      title: 'Delete transaction?',
+      message: `${name} · ${formatCurrency(transaction.amount, 2)}`,
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
     if (!confirmed) return;
     setDeletingId(transaction.transaction_id); setError(null);
     try {
@@ -69,6 +88,10 @@ export default function TransactionsScreen() {
     } catch (removeError) {
       setError(removeError instanceof Error ? removeError.message : 'The transaction could not be deleted.');
     } finally { setDeletingId(null); }
+  };
+
+  const duplicate = (transaction: Transaction) => {
+    router.push({ pathname: '/add-transaction', params: { duplicateOf: String(transaction.transaction_id) } });
   };
 
   const applyRecurring = async () => {
@@ -124,6 +147,16 @@ export default function TransactionsScreen() {
   });
   const filteredTotal = filtered.reduce((sum, transaction) => sum + transaction.amount, 0);
   const total = transactions.reduce((sum, transaction) => sum + transaction.amount, 0);
+  const sorted = [...filtered].sort((a, b) => {
+    switch (sortBy) {
+      case 'date-asc': return a.transaction_date.localeCompare(b.transaction_date) || (a.transaction_time || '').localeCompare(b.transaction_time || '');
+      case 'amount-desc': return b.amount - a.amount;
+      case 'amount-asc': return a.amount - b.amount;
+      case 'category': return a.category.localeCompare(b.category) || a.subcategory.localeCompare(b.subcategory);
+      case 'date-desc':
+      default: return b.transaction_date.localeCompare(a.transaction_date) || (b.transaction_time || '').localeCompare(a.transaction_time || '');
+    }
+  });
   const monthlyIncome = contribution?.household_income ?? 0;
   const graphSpent = categoryFilter === 'All' ? total : filteredTotal;
   const incomeRemaining = monthlyIncome - graphSpent;
@@ -200,8 +233,10 @@ export default function TransactionsScreen() {
         )}
       </View>
     )}
+    <View style={styles.stickyMonthWrap}>
+      <MonthSwitcher month={month} year={year} onPrevious={() => changeMonth(-1)} onNext={() => changeMonth(1)} sticky />
+    </View>
     <View style={styles.controls}>
-      <MonthSwitcher month={month} year={year} onPrevious={() => changeMonth(-1)} onNext={() => changeMonth(1)} />
       <View style={styles.searchWrap}><Search color={BudgetColors.muted} size={17} /><TextInput value={query} onChangeText={setQuery} placeholder="Search transactions or type recurring" placeholderTextColor={BudgetColors.faint} style={styles.searchInput} /></View>
       <View style={styles.filterRow}>
         {categories.map(category => (
@@ -248,13 +283,34 @@ export default function TransactionsScreen() {
       </View>
     )}
     <Panel>
-      <SectionHeader title="Monthly ledger" detail={(query || categoryFilter !== 'All') ? `${filtered.length} matching result${filtered.length === 1 ? '' : 's'}` : 'Newest transactions first'} />
+      <SectionHeader
+        title="Monthly ledger"
+        detail={(query || categoryFilter !== 'All') ? `${filtered.length} matching result${filtered.length === 1 ? '' : 's'}` : SORT_OPTIONS.find(option => option.key === sortBy)?.label}
+        action={
+          <Pressable onPress={() => setShowSortMenu(current => !current)} style={({ pressed }) => [styles.sortButton, pressed && styles.pressed]}>
+            <ArrowUpDown color={BudgetColors.green} size={14} />
+            <Text style={styles.sortButtonText}>Sort</Text>
+          </Pressable>
+        }
+      />
+      {showSortMenu && (
+        <View style={styles.sortMenu}>
+          {SORT_OPTIONS.map(option => (
+            <Pressable
+              key={option.key}
+              onPress={() => { setSortBy(option.key); setShowSortMenu(false); }}
+              style={({ pressed }) => [styles.sortMenuItem, sortBy === option.key && styles.sortMenuItemActive, pressed && styles.pressed]}>
+              <Text style={[styles.sortMenuItemText, sortBy === option.key && styles.sortMenuItemTextActive]}>{option.label}</Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
       <View style={styles.totalsRow}>
         <Text style={styles.totalsLabel}>Visible total</Text>
         <Text style={styles.totalsValue}>{formatCurrency(filteredTotal, 2)}</Text>
         {(query || categoryFilter !== 'All') && <Text style={styles.totalsContext}>of {formatCurrency(total, 2)} this month</Text>}
       </View>
-      {loading ? <View style={styles.loader}><ActivityIndicator color={BudgetColors.green} size="large" /></View> : filtered.length === 0 ? <EmptyState title={query ? 'Nothing matches' : 'No transactions yet'} detail={query ? 'Try a category, person, or location.' : 'Record the first expense for this month.'} /> : filtered.map((transaction, index) => <View key={transaction.transaction_id} style={[styles.row, compact && styles.rowCompact, index === 0 && styles.rowFirst]}>
+      {loading ? <View style={styles.loader}><ActivityIndicator color={BudgetColors.green} size="large" /></View> : sorted.length === 0 ? <EmptyState title={query ? 'Nothing matches' : 'No transactions yet'} detail={query ? 'Try a category, person, or location.' : 'Record the first expense for this month.'} /> : sorted.map((transaction, index) => <View key={transaction.transaction_id} style={[styles.row, compact && styles.rowCompact, index === 0 && styles.rowFirst]}>
         <Pressable style={({ pressed }) => [styles.rowContent, pressed && styles.pressed]} onPress={() => router.push({ pathname: '/add-transaction', params: { transactionId: String(transaction.transaction_id) } })}>
           <View style={styles.glyph}><ReceiptText color={BudgetColors.green} size={18} /></View>
           <View style={styles.main}>
@@ -278,6 +334,7 @@ export default function TransactionsScreen() {
         <View style={styles.amountColumn}>
           <Text style={styles.amount}>{formatCurrency(transaction.amount, 2)}</Text>
           <View style={styles.rowActions}>
+            <AnimatedIconButton accessibilityLabel={`Duplicate ${transaction.location || transaction.subcategory}`} onPress={() => duplicate(transaction)} style={styles.duplicateButton}><Copy color={BudgetColors.muted} size={16} /></AnimatedIconButton>
             <AnimatedIconButton accessibilityLabel={`Edit ${transaction.location || transaction.subcategory}`} onPress={() => router.push({ pathname: '/add-transaction', params: { transactionId: String(transaction.transaction_id) } })} style={styles.editButton}><Pencil color={BudgetColors.blue} size={16} /></AnimatedIconButton>
             <AnimatedIconButton accessibilityLabel={`Delete ${transaction.location || transaction.subcategory}`} disabled={deletingId === transaction.transaction_id} onPress={() => remove(transaction)} style={styles.deleteButton}>{deletingId === transaction.transaction_id ? <ActivityIndicator color={BudgetColors.coral} size="small" /> : <Trash2 color={BudgetColors.coral} size={16} />}</AnimatedIconButton>
           </View>
@@ -285,12 +342,6 @@ export default function TransactionsScreen() {
       </View>)}
     </Panel>
   </Page>;
-}
-
-function confirmRemoval(transaction: Transaction) {
-  const name = transaction.location || transaction.subcategory;
-  if (Platform.OS === 'web' && typeof window !== 'undefined') return Promise.resolve(window.confirm(`Delete ${name} for ${formatCurrency(transaction.amount, 2)}?`));
-  return new Promise<boolean>(resolve => Alert.alert('Delete transaction?', `${name} · ${formatCurrency(transaction.amount, 2)}`, [{ text: 'Cancel', style: 'cancel', onPress: () => resolve(false) }, { text: 'Delete', style: 'destructive', onPress: () => resolve(true) }], { cancelable: true, onDismiss: () => resolve(false) }));
 }
 
 const styles = StyleSheet.create({
@@ -320,6 +371,7 @@ const styles = StyleSheet.create({
   recurringCheckApplied: { borderColor: BudgetColors.muted, backgroundColor: BudgetColors.muted },
   recurringApplyBtn: { minHeight: 46, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: BudgetColors.green, borderTopWidth: 1, borderTopColor: BudgetColors.successLine },
   recurringApplyText: { color: BudgetColors.surface, fontFamily: Fonts.sans, fontSize: 13, fontWeight: '800' },
+  stickyMonthWrap: { zIndex: 4 },
   controls: { flexDirection: 'row', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' },
   searchWrap: { height: 42, minWidth: 240, flex: 1, maxWidth: 390, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: BudgetColors.line, borderRadius: 8, backgroundColor: BudgetColors.surface },
   searchInput: { flex: 1, height: 40, color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 13 },
@@ -339,7 +391,14 @@ const styles = StyleSheet.create({
   incomeSpent: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '700' },
   incomeLeft: { color: BudgetColors.green, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '800' },
   incomeOver: { color: BudgetColors.coral },
-  totalsRow: { minHeight: 44, paddingVertical: 8, borderTopWidth: 1, borderTopColor: BudgetColors.line, flexDirection: 'row', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' },
+  sortButton: { height: 30, paddingHorizontal: 10, borderRadius: 7, borderWidth: 1, borderColor: BudgetColors.line, backgroundColor: BudgetColors.canvas, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  sortButtonText: { color: BudgetColors.green, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '800' },
+  sortMenu: { marginBottom: 14, borderWidth: 1, borderColor: BudgetColors.line, borderRadius: 8, backgroundColor: BudgetColors.canvas, overflow: 'hidden' },
+  sortMenuItem: { minHeight: 38, paddingHorizontal: 14, justifyContent: 'center', borderTopWidth: 1, borderTopColor: BudgetColors.line },
+  sortMenuItemActive: { backgroundColor: BudgetColors.greenSoft },
+  sortMenuItemText: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '700' },
+  sortMenuItemTextActive: { color: BudgetColors.green },
+  totalsRow: { minHeight: 44, paddingVertical: 8, borderTopWidth: 1, borderTopColor: BudgetColors.line, flexDirection: 'row', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', backgroundColor: BudgetColors.surface },
   totalsLabel: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '700', textTransform: 'uppercase' },
   totalsValue: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 16, fontWeight: '800' },
   totalsContext: { color: BudgetColors.faint, fontFamily: Fonts.sans, fontSize: 11 },
@@ -357,6 +416,7 @@ const styles = StyleSheet.create({
   note: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11, lineHeight: 16, marginTop: 2 },
   amountColumn: { alignItems: 'flex-end', gap: 12 }, amount: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 14, fontWeight: '800' },
   rowActions: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  duplicateButton: { width: 34, height: 30, alignItems: 'center', justifyContent: 'center' },
   editButton: { width: 34, height: 30, alignItems: 'center', justifyContent: 'center' },
   deleteButton: { width: 34, height: 30, alignItems: 'center', justifyContent: 'center' },
 });

@@ -1,7 +1,8 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react-native';
-import { ReactElement, ReactNode } from 'react';
-import Animated, { Easing, FadeIn, FadeInDown, FadeInUp, ReduceMotion, useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
+import { createContext, ReactElement, ReactNode, useCallback, useContext, useState } from 'react';
 import {
+    Modal,
+    Platform,
     Pressable,
     RefreshControlProps,
     StyleProp,
@@ -11,8 +12,14 @@ import {
     View,
     ViewStyle,
 } from 'react-native';
+import Animated, { Easing, FadeIn, FadeInDown, FadeInUp, ReduceMotion, useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 
 import { BudgetColors, Fonts, MaxContentWidth } from '@/constants/theme';
+
+/** Keeps a date/year control visible at the top of the page scroll on web (desktop and mobile browsers). */
+const webStickyControl: ViewStyle | undefined = Platform.OS === 'web'
+  ? ({ position: 'sticky', top: 0, zIndex: 8 } as unknown as ViewStyle)
+  : undefined;
 
 const easeOut = Easing.out(Easing.cubic);
 const pageEntrance = FadeIn.duration(220).easing(easeOut).reduceMotion(ReduceMotion.System);
@@ -53,6 +60,10 @@ export function PageHeading({ eyebrow, title, description, action }: {
       {action}
     </Animated.View>
   );
+}
+
+export function StickyControlRow({ children }: { children: ReactNode }) {
+  return <View style={[styles.stickyControlRow, webStickyControl]}>{children}</View>;
 }
 
 export function Panel({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
@@ -121,18 +132,19 @@ export function EmptyState({ title, detail }: { title: string; detail: string })
   );
 }
 
-export function MonthSwitcher({ month, year, onPrevious, onNext }: {
+export function MonthSwitcher({ month, year, onPrevious, onNext, sticky = false }: {
   month: number;
   year: number;
   onPrevious: () => void;
   onNext: () => void;
+  sticky?: boolean;
 }) {
   const label = new Date(year, month - 1).toLocaleDateString('en-US', {
     month: 'long',
     year: 'numeric',
   });
   return (
-    <View style={styles.monthSwitcher}>
+    <View style={[styles.monthSwitcher, sticky && webStickyControl]}>
       <Pressable accessibilityLabel="Previous month" onPress={onPrevious} style={({ pressed }) => [styles.monthButton, pressed && styles.pressed]}>
         <ChevronLeft color={BudgetColors.ink} size={20} />
       </Pressable>
@@ -144,15 +156,16 @@ export function MonthSwitcher({ month, year, onPrevious, onNext }: {
   );
 }
 
-export function YearSwitcher({ year, onPrevious, onNext, previousDisabled = false, nextDisabled = false }: {
+export function YearSwitcher({ year, onPrevious, onNext, previousDisabled = false, nextDisabled = false, sticky = false }: {
   year: number;
   onPrevious: () => void;
   onNext: () => void;
   previousDisabled?: boolean;
   nextDisabled?: boolean;
+  sticky?: boolean;
 }) {
   return (
-    <View style={styles.yearSwitcher}>
+    <View style={[styles.yearSwitcher, sticky && webStickyControl]}>
       <Pressable
         accessibilityLabel="Previous year"
         disabled={previousDisabled}
@@ -219,6 +232,63 @@ export function AnimatedIconButton({
   );
 }
 
+type ConfirmOptions = {
+  title: string;
+  message?: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  destructive?: boolean;
+};
+
+type ConfirmState = ConfirmOptions & { resolve: (value: boolean) => void };
+
+const ConfirmContext = createContext<((options: ConfirmOptions) => Promise<boolean>) | null>(null);
+
+/** Mount once near the app root; provides the styled confirm dialog used by useConfirm(). */
+export function ConfirmProvider({ children }: { children: ReactNode }) {
+  const [state, setState] = useState<ConfirmState | null>(null);
+
+  const confirm = useCallback((options: ConfirmOptions) => {
+    return new Promise<boolean>(resolve => setState({ ...options, resolve }));
+  }, []);
+
+  const resolveWith = (value: boolean) => {
+    state?.resolve(value);
+    setState(null);
+  };
+
+  return (
+    <ConfirmContext.Provider value={confirm}>
+      {children}
+      <Modal transparent statusBarTranslucent animationType="fade" visible={Boolean(state)} onRequestClose={() => resolveWith(false)}>
+        <Pressable style={styles.confirmBackdrop} onPress={() => resolveWith(false)}>
+          {state && (
+            <Pressable style={styles.confirmCard} onPress={() => null}>
+              <Text style={styles.confirmTitle}>{state.title}</Text>
+              {state.message && <Text style={styles.confirmMessage}>{state.message}</Text>}
+              <View style={styles.confirmActions}>
+                <Pressable onPress={() => resolveWith(false)} style={({ pressed }) => [styles.confirmButton, styles.confirmCancelButton, pressed && styles.pressed]}>
+                  <Text style={styles.confirmCancelText}>{state.cancelLabel ?? 'Cancel'}</Text>
+                </Pressable>
+                <Pressable onPress={() => resolveWith(true)} style={({ pressed }) => [styles.confirmButton, state.destructive ? styles.confirmDestructiveButton : styles.confirmPrimaryButton, pressed && styles.pressed]}>
+                  <Text style={state.destructive ? styles.confirmDestructiveText : styles.confirmPrimaryText}>{state.confirmLabel ?? 'Confirm'}</Text>
+                </Pressable>
+              </View>
+            </Pressable>
+          )}
+        </Pressable>
+      </Modal>
+    </ConfirmContext.Provider>
+  );
+}
+
+/** Styled in-app replacement for window.confirm/Alert.alert — resolves true/false. */
+export function useConfirm() {
+  const confirm = useContext(ConfirmContext);
+  if (!confirm) throw new Error('useConfirm must be used within a ConfirmProvider');
+  return confirm;
+}
+
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: BudgetColors.canvas },
   pageContent: {
@@ -226,6 +296,7 @@ const styles = StyleSheet.create({
     paddingTop: 36, paddingBottom: 64, gap: 24,
   },
   pageContentCompact: { paddingHorizontal: 14, paddingTop: 24, paddingBottom: 40, gap: 18 },
+  stickyControlRow: { width: '100%', zIndex: 8, alignItems: 'flex-end' },
   headingRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: 20, flexWrap: 'wrap' },
   headingCopy: { width: '100%', maxWidth: 680, minWidth: 0, flexShrink: 1, gap: 6 },
   eyebrow: { color: BudgetColors.green, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0 },
@@ -260,4 +331,16 @@ const styles = StyleSheet.create({
   yearLabel: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 13, fontWeight: '800' },
   disabled: { opacity: 0.3 },
   pressed: { opacity: 0.65 },
+  confirmBackdrop: { flex: 1, backgroundColor: 'rgba(15, 24, 36, 0.4)', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20 },
+  confirmCard: { width: '100%', maxWidth: 380, borderRadius: 10, borderWidth: 1, borderColor: BudgetColors.line, backgroundColor: BudgetColors.surface, padding: 18, gap: 8 },
+  confirmTitle: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 16, fontWeight: '800' },
+  confirmMessage: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 13, lineHeight: 19 },
+  confirmActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 10 },
+  confirmButton: { minHeight: 40, paddingHorizontal: 16, borderRadius: 7, alignItems: 'center', justifyContent: 'center' },
+  confirmCancelButton: { backgroundColor: BudgetColors.canvas, borderWidth: 1, borderColor: BudgetColors.line },
+  confirmCancelText: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 13, fontWeight: '700' },
+  confirmPrimaryButton: { backgroundColor: BudgetColors.green },
+  confirmPrimaryText: { color: BudgetColors.surface, fontFamily: Fonts.sans, fontSize: 13, fontWeight: '800' },
+  confirmDestructiveButton: { backgroundColor: BudgetColors.coral },
+  confirmDestructiveText: { color: BudgetColors.surface, fontFamily: Fonts.sans, fontSize: 13, fontWeight: '800' },
 });

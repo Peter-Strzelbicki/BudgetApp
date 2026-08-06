@@ -1,7 +1,7 @@
 ---
 name: "HomeBudget Engineer"
 description: "Use when implementing, debugging, testing, or deploying HomeBudget: Expo SDK 57 UI, Express API, PostgreSQL budgets, transactions, paychecks, contributions, XLSX import, Raspberry Pi systemd, WireGuard, or production web changes."
-tools: [read, search, edit, execute, web, todo]
+tools: [execute, read, edit, search, web, todo]
 argument-hint: "Describe the HomeBudget feature, bug, or deployment task"
 user-invocable: true
 ---
@@ -19,8 +19,9 @@ The app is used from browsers on the home network and from a phone over WireGuar
 - Frontend: Expo SDK 57, Expo Router, React Native, React Native Web, TypeScript.
 - Read the exact versioned Expo documentation at `https://docs.expo.dev/versions/v57.0.0/` before changing Expo behavior.
 - Route files live in `src/app/`: `index`, `budget`, `transactions`, `add-transaction`, `add-paycheck`, `recurring`, `savings`, `goals`, `explore` (insights), `import`, `settings`. Most active implementations live in `src/components/screens/` (matching `*-screen.tsx` names, e.g. `dashboard-screen.tsx` backs `index.tsx`) and are re-exported by route files.
-- Shared navigation is `src/components/app-shell.tsx`, which also owns the tap-the-logo easter egg (5 taps within 2s opens a photo modal).
-- Shared page primitives are `src/components/budget-ui.tsx`.
+- Shared navigation is `src/components/app-shell.tsx`, which also owns the tap-the-logo easter egg (5 taps within 2s opens a photo modal). The app header lives outside each screen's own `Page` scroll view, so it stays in place without needing `position: sticky`/fixed styling.
+- Shared page primitives are `src/components/budget-ui.tsx`, including `ConfirmProvider`/`useConfirm()` — the styled in-app confirm dialog (mounted once in `src/app/_layout.tsx`) that replaces `window.confirm`/`Alert.alert` everywhere delete/remove actions need confirmation. `MonthSwitcher`/`YearSwitcher` take an opt-in `sticky` prop (web-only `position: sticky, top: 0`), but top-level page selectors should live in a standalone `StickyControlRow` below `PageHeading` rather than inside the heading action prop, because the animated heading wrapper prevents reliable sticky behavior. Use that pattern on Budget, Income (`add-paycheck-screen.tsx`), Transactions, Insights, and Dashboard; keep Dashboard's second, in-chart `YearSwitcher` non-sticky to avoid overlapping the main page selector.
+- The Transactions screen (`transactions-screen.tsx`) supports sorting the ledger (newest/oldest, amount, category) via a `SectionHeader` action button, a sticky month switcher above the search and filter controls, a non-sticky visible-total row, and a per-row "duplicate" action that navigates to `/add-transaction` with a `duplicateOf` param; `add-transaction-screen.tsx` prefills category/subcategory/amount/location/notes/person from that source transaction while keeping today's date/time.
 - Theme tokens are `src/constants/theme.ts`. Dark/light mode is a runtime toggle via `src/hooks/use-budget-theme.tsx` (`useBudgetTheme()` provides `mode`/`toggle`, persisted to `localStorage` on web, applied through `data-theme` + CSS variables in `src/global.css`). The toggle is exposed both in `app-shell.tsx` and in the Settings screen's Appearance panel.
 - API client and shared response types are in `src/constants/api.ts`; reference data (`getCategories`, `getPeople`) is memoized in-process via `getCachedReferenceData` to cut redundant round trips.
 - Backend: CommonJS Express server in `src/server/server.js`.

@@ -4,11 +4,11 @@ import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, RefreshControl, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import { AnimatedHorizontalBar, AnimatedVerticalBar } from '@/components/animated-bar';
-import { EmptyState, ErrorNotice, formatCurrency, Page, PageHeading, Panel, SectionHeader, StatCard, YearSwitcher } from '@/components/budget-ui';
+import { EmptyState, ErrorNotice, formatCurrency, Page, PageHeading, Panel, SectionHeader, StatCard, StickyControlRow, YearSwitcher } from '@/components/budget-ui';
 import { ContributionPanel } from '@/components/contribution-panel';
 import { BudgetLine, CategorySummary, ContributionSummary, getBudgetLines, getCategorySummary, getContributionSummary, getIncomeSummary, getMonthlySummary, getTransactions, getYtdSummary, IncomeMonthSummary, MonthlySummary, Transaction, YtdSummary } from '@/constants/api';
-import { clampToTrackedMonth, getTrackedMonthsForYear, TRACKING_START_YEAR } from '@/constants/tracking-period';
 import { BudgetColors, Fonts } from '@/constants/theme';
+import { clampToTrackedMonth, getTrackedMonthsForYear, TRACKING_START_YEAR } from '@/constants/tracking-period';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -175,14 +175,17 @@ export default function DashboardScreen() {
         eyebrow={`${selectedMonthName} ${year}`}
         title="Household overview"
         description="Select any month below to update spending and budget context."
-        action={<YearSwitcher
+      />
+      <StickyControlRow>
+        <YearSwitcher
           year={year}
           previousDisabled={year <= TRACKING_START_YEAR}
           nextDisabled={year >= currentYear}
           onPrevious={() => selectYear(year - 1)}
           onNext={() => selectYear(year + 1)}
-        />}
-      />
+          sticky
+        />
+      </StickyControlRow>
       {error && <ErrorNotice message={error} onRetry={() => load()} />}
       {monthLoading && <View style={styles.monthLoading}><ActivityIndicator color={BudgetColors.green} size="small" /><Text style={styles.monthLoadingText}>Loading {selectedMonthName}</Text></View>}
       {loading ? <View style={styles.loader}><ActivityIndicator color={BudgetColors.green} size="large" /></View> : (

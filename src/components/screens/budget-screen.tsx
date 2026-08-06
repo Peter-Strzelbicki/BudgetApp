@@ -1,20 +1,21 @@
-import { router } from 'expo-router';
 import { AnimatedIconButton } from '@/components/budget-ui';
+import { router } from 'expo-router';
 import { Copy, Pencil, Plus, Save, Trash2, X } from 'lucide-react-native';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 
 import { AnimatedHorizontalBar } from '@/components/animated-bar';
-import { ErrorNotice, formatCurrency, MonthSwitcher, moveMonth, Page, PageHeading, Panel, SectionHeader, StatCard } from '@/components/budget-ui';
+import { ErrorNotice, formatCurrency, MonthSwitcher, moveMonth, Page, PageHeading, Panel, SectionHeader, StatCard, StickyControlRow, useConfirm } from '@/components/budget-ui';
 import { ContributionPanel } from '@/components/contribution-panel';
 import { BudgetLine, Category, ContributionSummary, createSubcategory, deleteSubcategory, getBudgetLines, getCategories, getContributionSummary, saveBudgetLine } from '@/constants/api';
-import { TRACKING_START_MONTH, TRACKING_START_YEAR } from '@/constants/tracking-period';
 import { BudgetColors, Fonts } from '@/constants/theme';
+import { TRACKING_START_MONTH, TRACKING_START_YEAR } from '@/constants/tracking-period';
 
 export default function BudgetScreen() {
   const now = new Date();
   const width = useWindowDimensions().width;
   const compact = width < 700;
+  const confirm = useConfirm();
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
   const [lines, setLines] = useState<BudgetLine[]>([]);
@@ -119,9 +120,12 @@ export default function BudgetScreen() {
   };
 
   const removeLine = async (line: BudgetLine) => {
-    const confirmed = Platform.OS === 'web' && typeof window !== 'undefined'
-      ? window.confirm(`Remove "${line.subcategory}" from the budget? This cannot be undone if the line has no transactions.`)
-      : await new Promise<boolean>(resolve => Alert.alert('Remove line?', `Remove "${line.subcategory}"?`, [{ text: 'Cancel', style: 'cancel', onPress: () => resolve(false) }, { text: 'Remove', style: 'destructive', onPress: () => resolve(true) }], { cancelable: true, onDismiss: () => resolve(false) }));
+    const confirmed = await confirm({
+      title: 'Remove line?',
+      message: `Remove "${line.subcategory}" from the budget? This cannot be undone if the line has no transactions.`,
+      confirmLabel: 'Remove',
+      destructive: true,
+    });
     if (!confirmed) return;
     setDeletingId(line.subcategory_id);
     setError(null);
@@ -164,8 +168,10 @@ export default function BudgetScreen() {
         eyebrow="Planning"
         title="Monthly budget"
         description="Set a plan by category and compare it with transaction activity."
-        action={<MonthSwitcher month={month} year={year} onPrevious={() => changeMonth(-1)} onNext={() => changeMonth(1)} />}
       />
+      <StickyControlRow>
+        <MonthSwitcher month={month} year={year} onPrevious={() => changeMonth(-1)} onNext={() => changeMonth(1)} sticky />
+      </StickyControlRow>
       {error && <ErrorNotice message={error} onRetry={load} />}
       {notice && <View style={styles.notice}><Text style={styles.noticeText}>{notice}</Text></View>}
       <View style={styles.stats}>

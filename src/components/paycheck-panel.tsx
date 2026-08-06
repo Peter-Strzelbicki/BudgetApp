@@ -1,8 +1,8 @@
 import { CalendarDays, CircleDollarSign, Plus, Save, Trash2, UserRound } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Platform, Pressable, StyleProp, StyleSheet, Text, TextInput, useWindowDimensions, View, ViewStyle } from 'react-native';
+import { ActivityIndicator, Pressable, StyleProp, StyleSheet, Text, TextInput, useWindowDimensions, View, ViewStyle } from 'react-native';
 
-import { EmptyState, ErrorNotice, formatCurrency, Panel, SectionHeader } from '@/components/budget-ui';
+import { EmptyState, ErrorNotice, formatCurrency, Panel, SectionHeader, useConfirm } from '@/components/budget-ui';
 import { DateInput } from '@/components/date-input';
 import { addPaycheck, deletePaycheck, getPaychecks, getPeople, Paycheck, Person, updatePaycheckTransfer } from '@/constants/api';
 import { BudgetColors, Fonts } from '@/constants/theme';
@@ -14,6 +14,7 @@ export function PaycheckPanel({ month, year, onChanged, style }: {
   style?: StyleProp<ViewStyle>;
 }) {
   const compact = useWindowDimensions().width < 700;
+  const confirm = useConfirm();
   const [people, setPeople] = useState<Person[]>([]);
   const [paychecks, setPaychecks] = useState<Paycheck[]>([]);
   const [personId, setPersonId] = useState<number | null>(null);
@@ -89,7 +90,13 @@ export function PaycheckPanel({ month, year, onChanged, style }: {
   };
 
   const remove = async (paycheck: Paycheck) => {
-    if (!await confirmRemoval(paycheck)) return;
+    const confirmed = await confirm({
+      title: 'Delete paycheck?',
+      message: `${paycheck.person_name} · ${formatCurrency(paycheck.amount, 2)}`,
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
+    if (!confirmed) return;
     setDeletingId(paycheck.paycheck_id);
     setError(null);
     try {
@@ -219,12 +226,6 @@ function isValidDate(value: string) {
 
 function formatPaycheckDate(value: string) {
   return new Date(`${value.slice(0, 10)}T12:00:00`).toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' });
-}
-
-function confirmRemoval(paycheck: Paycheck) {
-  const message = `${paycheck.person_name} · ${formatCurrency(paycheck.amount, 2)}`;
-  if (Platform.OS === 'web' && typeof window !== 'undefined') return Promise.resolve(window.confirm(`Delete paycheck for ${message}?`));
-  return new Promise<boolean>(resolve => Alert.alert('Delete paycheck?', message, [{ text: 'Cancel', style: 'cancel', onPress: () => resolve(false) }, { text: 'Delete', style: 'destructive', onPress: () => resolve(true) }], { cancelable: true, onDismiss: () => resolve(false) }));
 }
 
 const styles = StyleSheet.create({

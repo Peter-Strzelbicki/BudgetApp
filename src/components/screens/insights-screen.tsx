@@ -3,10 +3,10 @@ import { ArrowRight, CheckCircle2, Lightbulb, PiggyBank, SlidersHorizontal, Stor
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
-import { EmptyState, ErrorNotice, formatCurrency, Page, PageHeading, Panel, SectionHeader, YearSwitcher } from '@/components/budget-ui';
+import { EmptyState, ErrorNotice, formatCurrency, Page, PageHeading, Panel, SectionHeader, StickyControlRow, YearSwitcher } from '@/components/budget-ui';
 import { BudgetLine, getBudgetLines, getTransactions, Transaction } from '@/constants/api';
-import { getTrackedMonthsForYear, TRACKING_START_YEAR } from '@/constants/tracking-period';
 import { BudgetColors, Fonts } from '@/constants/theme';
+import { getTrackedMonthsForYear, TRACKING_START_YEAR } from '@/constants/tracking-period';
 
 const SAVINGS_CATEGORY = 'Savings/Investments';
 const GENERATED_IMPORT_NOTE_PREFIX = 'Imported monthly expense from ';
@@ -79,14 +79,17 @@ export default function InsightsScreen() {
       eyebrow="Budget coach"
       title="Practical insights"
       description="Focused recommendations from your budget history, spending habits, and progress."
-      action={<YearSwitcher
+    />
+    <StickyControlRow>
+      <YearSwitcher
         year={year}
         previousDisabled={year <= TRACKING_START_YEAR}
         nextDisabled={year >= currentYear}
         onPrevious={() => setYear(current => Math.max(TRACKING_START_YEAR, current - 1))}
         onNext={() => setYear(current => Math.min(currentYear, current + 1))}
-      />}
-    />
+        sticky
+      />
+    </StickyControlRow>
     {error && <ErrorNotice message={error} onRetry={load} />}
     {loading ? <View style={styles.loader}><ActivityIndicator color={BudgetColors.green} size="large" /></View> : <>
       {insights.monthsAnalyzed === 0 ? (
