@@ -203,22 +203,30 @@ function calculateContributionSummary({
       const transferredToJoint = transfersByPerson.get(personId) || 0;
       const scheduledPayDates = getScheduledPayDates(paydayAnchorByPerson.get(personId), month, year, payPeriods);
       const hasPeriod = Number.isInteger(month) && Number.isInteger(year);
+      const lastPayment = lastJointPaymentByPerson.get(personId);
+      const occurredScheduledDates = scheduledPayDates.filter(date => occurredBy(date, asOfTimestamp));
+      // A payment settles every occurred installment on or before its own date, so those installments no longer count toward what's newly due.
+      const settledScheduledDates = lastPayment
+        ? occurredScheduledDates.filter(date => (parseIsoDate(date) ?? 0) <= lastPayment.dateTimestamp)
+        : [];
+      const hasSettledAnAccruedInstallment = settledScheduledDates.length > 0;
       const installmentsDue = scheduledPayDates.length > 0
-        ? scheduledPayDates.filter(date => occurredBy(date, asOfTimestamp)).length
+        ? occurredScheduledDates.length - settledScheduledDates.length
         : (!hasPeriod ? 1 : 0);
       const biweeklyShare = payPeriods > 0 ? monthlyShare / payPeriods : 0;
       const accruedShare = biweeklyShare * installmentsDue;
-      const remainingDue = Math.max(accruedShare - paidPersonally - transferredToJoint, 0);
+      // Every transfer this month happened on or before the latest payment, so once that payment has settled an installment it must not also reduce the next one.
+      const transferredSinceSettlement = hasSettledAnAccruedInstallment ? 0 : transferredToJoint;
+      const remainingDue = Math.max(accruedShare - paidPersonally - transferredSinceSettlement, 0);
       const monthlyRemaining = Math.max(monthlyShare - paidPersonally - transferredToJoint, 0);
       const nextPayDate = scheduledPayDates.find(date => !occurredBy(date, asOfTimestamp)) || null;
-      const targetInstallments = nextPayDate
-        ? Math.min(installmentsDue + 1, payPeriods)
-        : scheduledPayDates.length > 0
-          ? installmentsDue
-          : Math.min(Math.max(installmentsDue, 1), payPeriods);
+      // Preview 1 installment before any payday has arrived, unless the last payment already settled the most recently accrued one.
+      const targetInstallments = hasSettledAnAccruedInstallment
+        ? Math.min(installmentsDue, payPeriods)
+        : Math.min(Math.max(installmentsDue, 1), payPeriods);
       const nextPaydayShare = biweeklyShare * targetInstallments;
-      const transferDue = Math.max(nextPaydayShare - paidPersonally - transferredToJoint, 0);
-      const credit = Math.max(paidPersonally + transferredToJoint - nextPaydayShare, 0);
+      const transferDue = Math.max(nextPaydayShare - paidPersonally - transferredSinceSettlement, 0);
+      const credit = Math.max(paidPersonally + transferredSinceSettlement - nextPaydayShare, 0);
 
       return {
         person_id: personId,

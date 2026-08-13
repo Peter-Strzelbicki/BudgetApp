@@ -82,6 +82,91 @@ test("shows a person ahead when expenses exceed the upcoming biweekly target", (
   assert.equal(summary.people[0].credit, 200);
 });
 
+test("does not target a future, not-yet-due payday once the current one has arrived", () => {
+  const summary = calculateContributionSummary({
+    people: [{ person_id: 1, name: "Peter" }],
+    incomeConfig: [{ person_id: 1, biweekly_amount: 1762.17, payday_anchor: "2026-07-24" }],
+    personalExpenses: [{ person_id: 1, transaction_date: "2026-07-25", amount: 1049.23 }],
+    lastJointPayments: [{ person_id: 1, last_payment_date: "2026-07-24" }],
+    plannedExpenses: 3524.34,
+    month: 8,
+    year: 2026,
+    asOfDate: "2026-08-07",
+  });
+
+  assert.deepEqual(summary.people[0].scheduled_pay_dates, ["2026-08-07", "2026-08-21"]);
+  assert.equal(summary.people[0].installments_due, 1);
+  assert.equal(summary.people[0].biweekly_share, 1762.17);
+  assert.equal(summary.people[0].remaining_due, 712.94);
+  assert.equal(summary.people[0].transfer_due, 712.94);
+  assert.equal(summary.people[0].credit, 0);
+});
+
+test("clears the balance once a joint payment settles the currently accrued installment", () => {
+  const summary = calculateContributionSummary({
+    people: [{ person_id: 1, name: "Peter" }],
+    incomeConfig: [{ person_id: 1, biweekly_amount: 1762.17, payday_anchor: "2026-07-24" }],
+    personalExpenses: [{ person_id: 1, transaction_date: "2026-07-25", amount: 1049.23 }],
+    jointPayments: [{ person_id: 1, payment_date: "2026-08-07", amount: 712.94 }],
+    lastJointPayments: [{ person_id: 1, last_payment_date: "2026-08-07" }],
+    plannedExpenses: 3524.34,
+    month: 8,
+    year: 2026,
+    asOfDate: "2026-08-07",
+  });
+
+  assert.equal(summary.people[0].paid_personally, 0);
+  assert.equal(summary.people[0].transferred_to_joint, 712.94);
+  assert.equal(summary.people[0].installments_due, 0);
+  assert.equal(summary.people[0].remaining_due, 0);
+  assert.equal(summary.people[0].transfer_due, 0);
+  assert.equal(summary.people[0].credit, 0);
+});
+
+test("tracks only new expenses made after a settling payment, without prematurely previewing the next payday", () => {
+  const summary = calculateContributionSummary({
+    people: [{ person_id: 1, name: "Peter" }],
+    incomeConfig: [{ person_id: 1, biweekly_amount: 1762.17, payday_anchor: "2026-07-24" }],
+    personalExpenses: [
+      { person_id: 1, transaction_date: "2026-07-25", amount: 1049.23 },
+      { person_id: 1, transaction_date: "2026-08-10", amount: 40 },
+    ],
+    jointPayments: [{ person_id: 1, payment_date: "2026-08-07", amount: 712.94 }],
+    lastJointPayments: [{ person_id: 1, last_payment_date: "2026-08-07" }],
+    plannedExpenses: 3524.34,
+    month: 8,
+    year: 2026,
+    asOfDate: "2026-08-12",
+  });
+
+  assert.equal(summary.people[0].paid_personally, 40);
+  assert.equal(summary.people[0].remaining_due, 0);
+  assert.equal(summary.people[0].transfer_due, 0);
+  assert.equal(summary.people[0].credit, 40);
+});
+
+test("accrues the next installment once its payday arrives, netting expenses made since the last payment", () => {
+  const summary = calculateContributionSummary({
+    people: [{ person_id: 1, name: "Peter" }],
+    incomeConfig: [{ person_id: 1, biweekly_amount: 1762.17, payday_anchor: "2026-07-24" }],
+    personalExpenses: [
+      { person_id: 1, transaction_date: "2026-07-25", amount: 1049.23 },
+      { person_id: 1, transaction_date: "2026-08-10", amount: 40 },
+    ],
+    jointPayments: [{ person_id: 1, payment_date: "2026-08-07", amount: 712.94 }],
+    lastJointPayments: [{ person_id: 1, last_payment_date: "2026-08-07" }],
+    plannedExpenses: 3524.34,
+    month: 8,
+    year: 2026,
+    asOfDate: "2026-08-21",
+  });
+
+  assert.equal(summary.people[0].installments_due, 1);
+  assert.equal(summary.people[0].paid_personally, 40);
+  assert.equal(summary.people[0].remaining_due, 1722.17);
+  assert.equal(summary.people[0].transfer_due, 1722.17);
+});
+
 test("adds extra income to monthly totals without changing joint contribution shares", () => {
   const summary = calculateContributionSummary({
     people: [
