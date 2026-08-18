@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import { EmptyState, ErrorNotice, formatCurrency, Page, PageHeading, Panel, SectionHeader, StickyControlRow, YearSwitcher } from '@/components/budget-ui';
-import { BudgetLine, getBudgetLines, getTransactions, Transaction } from '@/constants/api';
+import { BudgetLine, getBudgetLines, getBudgetTotal, getTransactions, Transaction } from '@/constants/api';
 import { BudgetColors, Fonts } from '@/constants/theme';
 import { getTrackedMonthsForYear, TRACKING_START_YEAR } from '@/constants/tracking-period';
 
@@ -39,6 +39,12 @@ interface InsightModel {
   wins: CoachingMessage[];
 }
 
+interface MonthlyBudget {
+  month: number;
+  lines: BudgetLine[];
+  totalBudget: number | null;
+}
+
 export default function InsightsScreen() {
   const now = new Date();
   const currentYear = now.getFullYear();
@@ -47,7 +53,7 @@ export default function InsightsScreen() {
   const compact = width < 780;
   const narrow = width < 520;
   const [year, setYear] = useState(currentYear);
-  const [budgetMonths, setBudgetMonths] = useState<BudgetLine[][]>([]);
+  const [monthlyBudgets, setMonthlyBudgets] = useState<MonthlyBudget[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -57,22 +63,23 @@ export default function InsightsScreen() {
     try {
       const trackedMonths = getTrackedMonthsForYear(targetYear, now);
       if (trackedMonths.length === 0) {
-        setBudgetMonths([]);
+        setMonthlyBudgets([]);
         setTransactions([]);
         return;
       }
-      const [monthRows, transactionRows] = await Promise.all([
+      const [lineRows, totalRows, transactionRows] = await Promise.all([
         Promise.all(trackedMonths.map(monthValue => getBudgetLines(monthValue, targetYear))),
+        Promise.all(trackedMonths.map(monthValue => getBudgetTotal(monthValue, targetYear))),
         getTransactions(undefined, targetYear),
       ]);
-      setBudgetMonths(monthRows);
+      setMonthlyBudgets(trackedMonths.map((monthValue, index) => ({ month: monthValue, lines: lineRows[index], totalBudget: totalRows[index] })));
       setTransactions(transactionRows);
     } catch (loadError) { setError(loadError instanceof Error ? loadError.message : 'Insights could not be loaded.'); }
     finally { setLoading(false); }
   };
   useEffect(() => { load(year); }, [year]);
 
-  const insights = buildInsights(budgetMonths, transactions);
+  const insights = buildInsights(monthlyBudgets, transactions);
 
   return <Page>
     <PageHeading
@@ -195,13 +202,14 @@ function TextLink({ label, onPress }: { label: string; onPress: () => void }) {
   </Pressable>;
 }
 
-function buildInsights(budgetMonths: BudgetLine[][], transactions: Transaction[]): InsightModel {
-  const trackedMonths = budgetMonths
-    .map((lines, index) => ({
-      month: index + 1,
-      lines,
-      planned: lines.reduce((sum, line) => sum + line.projected_amount, 0),
-      actual: lines.reduce((sum, line) => sum + line.actual_amount, 0),
+function buildInsights(monthlyBudgets: MonthlyBudget[], transactions: Transaction[]): InsightModel {
+  const trackedMonths = monthlyBudgets
+    .map(entry => ({
+      month: entry.month,
+      lines: entry.lines,
+      planned: entry.lines.reduce((sum, line) => sum + line.projected_amount, 0),
+      actual: entry.lines.reduce((sum, line) => sum + line.actual_amount, 0),
+      totalBudget: entry.totalBudget,
     }))
     .filter(month => month.planned > 0 || month.actual > 0);
   const monthsAnalyzed = trackedMonths.length;
@@ -217,6 +225,11 @@ function buildInsights(budgetMonths: BudgetLine[][], transactions: Transaction[]
       wins: [],
     };
   }
+
+  const capTrackedMonths = trackedMonths.filter(month => month.totalBudget !== null && month.totalBudget > 0);
+  const latestCappedMonth = capTrackedMonths[capTrackedMonths.length - 1] ?? null;
+  const capHeadroom = latestCappedMonth ? latestCappedMonth.totalBudget! - latestCappedMonth.planned : null;
+  const monthsOverCap = capTrackedMonths.filter(month => month.planned > month.totalBudget!);
 
   const categoryTotals = new Map<string, { actual: number; planned: number }>();
   trackedMonths.forEach(month => {
@@ -239,22 +252,30 @@ function buildInsights(budgetMonths: BudgetLine[][], transactions: Transaction[]
     .flatMap<BudgetRecommendation>(category => {
       const overage = category.avgSpent - category.avgPlanned;
       const meaningfulDifference = Math.max(25, category.avgPlanned * 0.05);
+      const capNote = (suggestedIncrease: number) => {
+        if (capHeadroom === null) return '';
+        return capHeadroom >= suggestedIncrease
+          ? ` There is currently about ${formatCurrency(capHeadroom)} of headroom under the ${formatCurrency(latestCappedMonth!.totalBudget!)} monthly cap for this.`
+          : ` The ${formatCurrency(latestCappedMonth!.totalBudget!)} monthly cap only leaves about ${formatCurrency(Math.max(capHeadroom, 0))} of headroom, so raising this will likely need a cut elsewhere.`;
+      };
 
       if (category.avgSpent > 0 && category.avgPlanned === 0) {
+        const suggestedPlan = roundUp(category.avgSpent, 10);
         return [{
           ...category,
-          suggestedPlan: roundUp(category.avgSpent, 10),
-          detail: 'This spending has no average budget. Give it a visible monthly allowance, then decide whether the amount feels intentional.',
+          suggestedPlan,
+          detail: `This spending has no average budget. Give it a visible monthly allowance, then decide whether the amount feels intentional.${capNote(suggestedPlan)}`,
           direction: 'raise' as const,
           priority: category.avgSpent,
         }];
       }
 
       if (overage >= meaningfulDifference) {
+        const suggestedPlan = roundUp(category.avgSpent, 10);
         return [{
           ...category,
-          suggestedPlan: roundUp(category.avgSpent, 10),
-          detail: `Spending averages ${formatCurrency(overage)} above plan. Raise the plan if that level is expected, or keep the current plan as a clear monthly cap.`,
+          suggestedPlan,
+          detail: `Spending averages ${formatCurrency(overage)} above plan. Raise the plan if that level is expected, or keep the current plan as a clear monthly cap.${capNote(suggestedPlan - category.avgPlanned)}`,
           direction: 'raise' as const,
           priority: overage,
         }];
@@ -290,7 +311,14 @@ function buildInsights(budgetMonths: BudgetLine[][], transactions: Transaction[]
     : 'Keep tracking for another month before making broad changes.';
   let coachTone: InsightModel['coachTone'] = 'attention';
 
-  if (plannedMonths > 0 && underPlanRatio >= 0.75) {
+  if (monthsOverCap.length > 0) {
+    const worst = monthsOverCap.reduce((max, candidate) =>
+      (candidate.planned - candidate.totalBudget!) > (max.planned - max.totalBudget!) ? candidate : max);
+    const overCapAmount = worst.planned - worst.totalBudget!;
+    coachTitle = 'The plan allocates more than the monthly budget cap.';
+    coachDetail = `${monthName(worst.month)} plans ${formatCurrency(worst.planned)} against a ${formatCurrency(worst.totalBudget!)} cap, ${formatCurrency(overCapAmount)} over. Lower a category plan or raise the cap before spending happens.`;
+    coachTone = 'attention';
+  } else if (plannedMonths > 0 && underPlanRatio >= 0.75) {
     coachTitle = 'You are giving the budget real breathing room.';
     coachDetail = `${monthsUnderPlan} of ${plannedMonths} planned months finished at or under budget. Keep what is working and make only targeted adjustments.`;
     coachTone = 'good';
@@ -323,6 +351,15 @@ function buildInsights(budgetMonths: BudgetLine[][], transactions: Transaction[]
       detail: `Spending has averaged ${formatCurrency(avgMonthlyRoom)} below the full plan. Moving half of that room after month-end keeps a buffer while directing the rest to savings.`,
       amount: sweepAmount,
       kind: 'sweep',
+    });
+  }
+
+  if (monthsOverCap.length === 0 && capHeadroom !== null && capHeadroom >= 50 && savingsIdeas.length < 3) {
+    savingsIdeas.push({
+      title: 'Assign the unallocated cap headroom',
+      detail: `${formatCurrency(capHeadroom)} of the ${formatCurrency(latestCappedMonth!.totalBudget!)} monthly cap is not yet allocated to a category. Give it a purpose now, before it gets spent without a plan.`,
+      amount: capHeadroom,
+      kind: 'goal',
     });
   }
 
@@ -453,6 +490,10 @@ function roundUp(value: number, increment: number) {
 
 function roundDown(value: number, increment: number) {
   return Math.floor(value / increment) * increment;
+}
+
+function monthName(month: number) {
+  return new Date(2000, month - 1, 1).toLocaleDateString('en-US', { month: 'long' });
 }
 
 const styles = StyleSheet.create({

@@ -16,6 +16,10 @@ IF OBJECT_ID(N'dbo.goals', N'U') IS NOT NULL
     DROP TABLE dbo.goals;
 IF OBJECT_ID(N'dbo.budget_lines', N'U') IS NOT NULL
     DROP TABLE dbo.budget_lines;
+IF OBJECT_ID(N'dbo.budget_template_lines', N'U') IS NOT NULL
+    DROP TABLE dbo.budget_template_lines;
+IF OBJECT_ID(N'dbo.budget_templates', N'U') IS NOT NULL
+    DROP TABLE dbo.budget_templates;
 IF OBJECT_ID(N'dbo.income', N'U') IS NOT NULL
     DROP TABLE dbo.income;
 IF OBJECT_ID(N'dbo.budget_periods', N'U') IS NOT NULL
@@ -53,7 +57,24 @@ CREATE TABLE dbo.budget_periods (
     period_id INT IDENTITY(1,1) PRIMARY KEY,
     year SMALLINT NOT NULL,
     month SMALLINT NOT NULL CHECK (month BETWEEN 1 AND 12),
+    total_budget DECIMAL(10,2) NULL,
     CONSTRAINT UQ_budget_periods_year_month UNIQUE (year, month)
+);
+
+CREATE TABLE dbo.budget_templates (
+    template_id INT IDENTITY(1,1) PRIMARY KEY,
+    name NVARCHAR(100) NOT NULL UNIQUE
+);
+
+CREATE TABLE dbo.budget_template_lines (
+    template_id INT NOT NULL,
+    subcategory_id INT NOT NULL,
+    projected_amount DECIMAL(10,2) NOT NULL DEFAULT 0,
+    CONSTRAINT PK_budget_template_lines PRIMARY KEY (template_id, subcategory_id),
+    CONSTRAINT FK_budget_template_lines_templates FOREIGN KEY (template_id)
+        REFERENCES dbo.budget_templates(template_id) ON DELETE CASCADE,
+    CONSTRAINT FK_budget_template_lines_subcategories FOREIGN KEY (subcategory_id)
+        REFERENCES dbo.subcategories(subcategory_id)
 );
 
 CREATE TABLE dbo.income (
@@ -115,7 +136,8 @@ CREATE INDEX IX_transactions_subcategory ON dbo.transactions(subcategory_id);
 CREATE TABLE dbo.goals (
     goal_id INT IDENTITY(1,1) PRIMARY KEY,
     year SMALLINT NOT NULL,
-    description NVARCHAR(255) NOT NULL
+    description NVARCHAR(255) NOT NULL,
+    completed BIT NOT NULL DEFAULT 0
 );
 
 CREATE VIEW dbo.v_monthly_actuals AS

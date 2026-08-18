@@ -385,6 +385,25 @@ async function ensureFeatureSchema() {
         transaction_id BIGINT REFERENCES public.transactions(transaction_id) ON DELETE SET NULL,
         UNIQUE(recurring_id, month, year)
       )`);
+    await query(`
+      ALTER TABLE public.goals
+      ADD COLUMN IF NOT EXISTS completed BOOLEAN NOT NULL DEFAULT FALSE`);
+    await query(`
+      ALTER TABLE public.budget_periods
+      ADD COLUMN IF NOT EXISTS total_budget NUMERIC(10, 2)`);
+    await query(`
+      CREATE TABLE IF NOT EXISTS public.budget_templates (
+        template_id BIGSERIAL PRIMARY KEY,
+        name VARCHAR(100) NOT NULL UNIQUE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`);
+    await query(`
+      CREATE TABLE IF NOT EXISTS public.budget_template_lines (
+        template_id BIGINT NOT NULL REFERENCES public.budget_templates(template_id) ON DELETE CASCADE,
+        subcategory_id INTEGER NOT NULL REFERENCES public.subcategories(subcategory_id) ON DELETE CASCADE,
+        projected_amount NUMERIC(10, 2) NOT NULL DEFAULT 0,
+        PRIMARY KEY (template_id, subcategory_id)
+      )`);
     return;
   }
 
@@ -541,6 +560,34 @@ async function ensureFeatureSchema() {
         CONSTRAINT FK_recurring_applied_rt FOREIGN KEY (recurring_id)
           REFERENCES dbo.recurring_transactions(recurring_id) ON DELETE CASCADE,
         CONSTRAINT UQ_recurring_applied UNIQUE (recurring_id, month, year)
+      );
+    END`);
+  await query(`
+    IF COL_LENGTH('dbo.goals', 'completed') IS NULL
+      ALTER TABLE dbo.goals ADD completed BIT NOT NULL CONSTRAINT DF_goals_completed DEFAULT (0)`);
+  await query(`
+    IF COL_LENGTH('dbo.budget_periods', 'total_budget') IS NULL
+      ALTER TABLE dbo.budget_periods ADD total_budget DECIMAL(10,2) NULL`);
+  await query(`
+    IF OBJECT_ID(N'dbo.budget_templates', N'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.budget_templates (
+        template_id INT IDENTITY(1,1) PRIMARY KEY,
+        name NVARCHAR(100) NOT NULL UNIQUE
+      );
+    END`);
+  await query(`
+    IF OBJECT_ID(N'dbo.budget_template_lines', N'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.budget_template_lines (
+        template_id INT NOT NULL,
+        subcategory_id INT NOT NULL,
+        projected_amount DECIMAL(10,2) NOT NULL DEFAULT 0,
+        CONSTRAINT PK_budget_template_lines PRIMARY KEY (template_id, subcategory_id),
+        CONSTRAINT FK_budget_template_lines_templates FOREIGN KEY (template_id)
+          REFERENCES dbo.budget_templates(template_id) ON DELETE CASCADE,
+        CONSTRAINT FK_budget_template_lines_subcategories FOREIGN KEY (subcategory_id)
+          REFERENCES dbo.subcategories(subcategory_id)
       );
     END`);
 }
@@ -1854,6 +1901,220 @@ app.put("/budget-lines/:subcategoryId", async (req, res) => {
   }
 });
 
+app.get("/budget-periods", async (req, res) => {
+  try {
+    const { month, year } = req.query;
+    if (!month || !year) {
+      return res.status(400).json({ error: "month and year are required" });
+    }
+
+    const queryText = dbType === "postgres"
+      ? `SELECT total_budget FROM public.budget_periods WHERE month = @month AND year = @year`
+      : `SELECT total_budget FROM dbo.budget_periods WHERE month = @month AND year = @year`;
+    const rows = await query(queryText, { month: Number(month), year: Number(year) });
+    const totalBudget = rows[0]?.total_budget ?? null;
+    res.json({ total_budget: totalBudget === null ? null : Number(totalBudget) });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to fetch the budget period" });
+  }
+});
+
+app.put("/budget-periods", async (req, res) => {
+  try {
+    const month = Number(req.body.month);
+    const year = Number(req.body.year);
+    const rawTotalBudget = req.body.total_budget;
+    const totalBudget = rawTotalBudget === null || rawTotalBudget === undefined || rawTotalBudget === ""
+      ? null
+      : Number(rawTotalBudget);
+
+    if (!Number.isInteger(month) || month < 1 || month > 12 || !Number.isInteger(year)) {
+      return res.status(400).json({ error: "Valid month and year are required" });
+    }
+    if (totalBudget !== null && (!Number.isFinite(totalBudget) || totalBudget < 0)) {
+      return res.status(400).json({ error: "total_budget must be a non-negative number or null" });
+    }
+
+    if (dbType === "postgres") {
+      const rows = await query(
+        `INSERT INTO public.budget_periods (year, month, total_budget)
+         VALUES (@year, @month, @total_budget)
+         ON CONFLICT (year, month) DO UPDATE SET total_budget = EXCLUDED.total_budget
+         RETURNING total_budget`,
+        { year, month, total_budget: totalBudget }
+      );
+      return res.json({ total_budget: rows[0].total_budget === null ? null : Number(rows[0].total_budget) });
+    }
+
+    const db = await getDb();
+    const request = db.request();
+    request.input("year", mssql.SmallInt, year);
+    request.input("month", mssql.SmallInt, month);
+    request.input("total_budget", mssql.Decimal(10, 2), totalBudget);
+    const result = await request.query(`
+      IF NOT EXISTS (SELECT 1 FROM dbo.budget_periods WHERE year = @year AND month = @month)
+        INSERT INTO dbo.budget_periods (year, month, total_budget) VALUES (@year, @month, @total_budget);
+      ELSE
+        UPDATE dbo.budget_periods SET total_budget = @total_budget WHERE year = @year AND month = @month;
+      SELECT total_budget FROM dbo.budget_periods WHERE year = @year AND month = @month;
+    `);
+    res.json({ total_budget: result.recordset[0].total_budget === null ? null : Number(result.recordset[0].total_budget) });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to save the budget period" });
+  }
+});
+
+app.get("/budget-templates", async (req, res) => {
+  try {
+    const queryText = dbType === "postgres"
+      ? `SELECT template_id, name FROM public.budget_templates ORDER BY name`
+      : `SELECT template_id, name FROM dbo.budget_templates ORDER BY name`;
+    const rows = await query(queryText);
+    res.json(rows);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to fetch budget templates" });
+  }
+});
+
+app.get("/budget-templates/:templateId", async (req, res) => {
+  try {
+    const templateId = Number(req.params.templateId);
+    if (!Number.isInteger(templateId)) {
+      return res.status(400).json({ error: "A valid template ID is required" });
+    }
+
+    const templateQuery = dbType === "postgres"
+      ? `SELECT template_id, name FROM public.budget_templates WHERE template_id = @template_id`
+      : `SELECT template_id, name FROM dbo.budget_templates WHERE template_id = @template_id`;
+    const templateRows = await query(templateQuery, { template_id: templateId });
+    if (templateRows.length === 0) {
+      return res.status(404).json({ error: "Template not found" });
+    }
+
+    const linesQuery = dbType === "postgres"
+      ? `SELECT subcategory_id, projected_amount FROM public.budget_template_lines WHERE template_id = @template_id`
+      : `SELECT subcategory_id, projected_amount FROM dbo.budget_template_lines WHERE template_id = @template_id`;
+    const lineRows = await query(linesQuery, { template_id: templateId });
+
+    res.json({
+      ...templateRows[0],
+      lines: lineRows.map(row => ({ subcategory_id: row.subcategory_id, projected_amount: Number(row.projected_amount) })),
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to fetch the budget template" });
+  }
+});
+
+app.post("/budget-templates", async (req, res) => {
+  try {
+    const name = typeof req.body.name === "string" ? req.body.name.trim() : "";
+    const lines = Array.isArray(req.body.lines) ? req.body.lines : [];
+    if (!name) {
+      return res.status(400).json({ error: "A template name is required" });
+    }
+    for (const line of lines) {
+      if (!Number.isInteger(Number(line.subcategory_id)) || !Number.isFinite(Number(line.projected_amount))) {
+        return res.status(400).json({ error: "Each line requires a valid subcategory_id and projected_amount" });
+      }
+    }
+
+    if (dbType === "postgres") {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const templateResult = await client.query(
+          `INSERT INTO public.budget_templates (name)
+           VALUES ($1)
+           ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+           RETURNING template_id, name`,
+          [name]
+        );
+        const template = templateResult.rows[0];
+        await client.query(`DELETE FROM public.budget_template_lines WHERE template_id = $1`, [template.template_id]);
+        for (const line of lines) {
+          await client.query(
+            `INSERT INTO public.budget_template_lines (template_id, subcategory_id, projected_amount)
+             VALUES ($1, $2, $3)`,
+            [template.template_id, Number(line.subcategory_id), Number(line.projected_amount)]
+          );
+        }
+        await client.query("COMMIT");
+        return res.status(201).json(template);
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+
+    const db = await getDb();
+    const transaction = new mssql.Transaction(db);
+    await transaction.begin();
+    try {
+      const upsertRequest = new mssql.Request(transaction);
+      upsertRequest.input("name", mssql.NVarChar(100), name);
+      const upsertResult = await upsertRequest.query(`
+        IF NOT EXISTS (SELECT 1 FROM dbo.budget_templates WHERE name = @name)
+          INSERT INTO dbo.budget_templates (name) VALUES (@name);
+        SELECT template_id, name FROM dbo.budget_templates WHERE name = @name;
+      `);
+      const templateId = upsertResult.recordset[0].template_id;
+
+      const clearRequest = new mssql.Request(transaction);
+      clearRequest.input("template_id", mssql.Int, templateId);
+      await clearRequest.query(`DELETE FROM dbo.budget_template_lines WHERE template_id = @template_id`);
+
+      for (const line of lines) {
+        const lineRequest = new mssql.Request(transaction);
+        lineRequest.input("template_id", mssql.Int, templateId);
+        lineRequest.input("subcategory_id", mssql.Int, Number(line.subcategory_id));
+        lineRequest.input("projected_amount", mssql.Decimal(10, 2), Number(line.projected_amount));
+        await lineRequest.query(`
+          INSERT INTO dbo.budget_template_lines (template_id, subcategory_id, projected_amount)
+          VALUES (@template_id, @subcategory_id, @projected_amount);
+        `);
+      }
+
+      await transaction.commit();
+      return res.status(201).json({ template_id: templateId, name });
+    } catch (error) {
+      await transaction.rollback();
+      throw error;
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to save the budget template" });
+  }
+});
+
+app.delete("/budget-templates/:templateId", async (req, res) => {
+  try {
+    const templateId = Number(req.params.templateId);
+    if (!Number.isInteger(templateId)) {
+      return res.status(400).json({ error: "A valid template ID is required" });
+    }
+
+    const queryText = dbType === "postgres"
+      ? `DELETE FROM public.budget_templates WHERE template_id = @template_id RETURNING template_id`
+      : `DELETE FROM dbo.budget_templates OUTPUT DELETED.template_id AS template_id WHERE template_id = @template_id`;
+    const rows = await query(queryText, { template_id: templateId });
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: "Template not found" });
+    }
+
+    res.json({ template_id: rows[0].template_id });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to delete the budget template" });
+  }
+});
+
 app.get("/categories", async (req, res) => {
   try {
     const queryText = dbType === "postgres"
@@ -1989,17 +2250,17 @@ app.get("/goals", async (req, res) => {
     }
 
     const queryText = dbType === "postgres"
-      ? `SELECT goal_id, year, description
+      ? `SELECT goal_id, year, description, completed
          FROM public.goals
         WHERE year = @year
         ORDER BY goal_id DESC`
-      : `SELECT goal_id, year, description
+      : `SELECT goal_id, year, description, completed
          FROM dbo.goals
         WHERE year = @year
         ORDER BY goal_id DESC`;
 
     const rows = await query(queryText, { year: Number(year) });
-    res.json(rows);
+    res.json(rows.map(row => ({ ...row, completed: dbType === "postgres" ? row.completed : Boolean(row.completed) })));
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Failed to fetch goals" });
@@ -2040,6 +2301,32 @@ app.post("/goals", async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Failed to add goal" });
+  }
+});
+
+app.put("/goals/:goalId", async (req, res) => {
+  try {
+    const goalId = Number(req.params.goalId);
+    if (!Number.isInteger(goalId)) {
+      return res.status(400).json({ error: "A valid goal ID is required" });
+    }
+    if (typeof req.body.completed !== "boolean") {
+      return res.status(400).json({ error: "completed must be a boolean" });
+    }
+
+    const queryText = dbType === "postgres"
+      ? `UPDATE public.goals SET completed = @completed WHERE goal_id = @goal_id RETURNING goal_id, year, description, completed`
+      : `UPDATE dbo.goals SET completed = @completed OUTPUT INSERTED.goal_id AS goal_id, INSERTED.year AS year, INSERTED.description AS description, INSERTED.completed AS completed WHERE goal_id = @goal_id`;
+    const rows = await query(queryText, { goal_id: goalId, completed: req.body.completed });
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: "Goal not found" });
+    }
+
+    res.json({ ...rows[0], completed: dbType === "postgres" ? rows[0].completed : Boolean(rows[0].completed) });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to update goal" });
   }
 });
 

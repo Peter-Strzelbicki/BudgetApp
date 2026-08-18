@@ -1,5 +1,5 @@
-import { Platform } from 'react-native';
 import type { DocumentPickerAsset } from 'expo-document-picker';
+import { Platform } from 'react-native';
 
 const DEFAULT_API_URL = Platform.select({
   android: 'http://10.0.2.2:3000',
@@ -190,6 +190,7 @@ export interface Goal {
   goal_id: number;
   year: number;
   description: string;
+  completed: boolean;
 }
 
 export interface BackupStatus {
@@ -716,6 +717,57 @@ export function saveBudgetLine(
   );
 }
 
+export async function getBudgetTotal(month: number, year: number): Promise<number | null> {
+  const result = await requestJson<{ total_budget: number | string | null }>(
+    `/budget-periods?month=${month}&year=${year}`,
+  );
+  return result.total_budget === null ? null : Number(result.total_budget);
+}
+
+export async function saveBudgetTotal(month: number, year: number, totalBudget: number | null): Promise<number | null> {
+  const result = await requestJson<{ total_budget: number | string | null }>('/budget-periods', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ month, year, total_budget: totalBudget }),
+  });
+  return result.total_budget === null ? null : Number(result.total_budget);
+}
+
+export interface BudgetTemplate {
+  template_id: number;
+  name: string;
+}
+
+export interface BudgetTemplateDetail extends BudgetTemplate {
+  lines: { subcategory_id: number; projected_amount: number }[];
+}
+
+export function getBudgetTemplates() {
+  return requestJson<BudgetTemplate[]>('/budget-templates');
+}
+
+export async function getBudgetTemplate(templateId: number): Promise<BudgetTemplateDetail> {
+  const result = await requestJson<Omit<BudgetTemplateDetail, 'lines'> & {
+    lines: { subcategory_id: number; projected_amount: number | string }[];
+  }>(`/budget-templates/${templateId}`);
+  return {
+    ...result,
+    lines: result.lines.map(line => ({ ...line, projected_amount: Number(line.projected_amount) })),
+  };
+}
+
+export function saveBudgetTemplate(name: string, lines: { subcategory_id: number; projected_amount: number }[]) {
+  return requestJson<BudgetTemplate>('/budget-templates', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, lines }),
+  }, 1);
+}
+
+export function deleteBudgetTemplate(templateId: number) {
+  return requestJson<{ template_id: number }>(`/budget-templates/${templateId}`, { method: 'DELETE' }, 1);
+}
+
 export function getGoals(year: number) {
   return requestJson<Goal[]>(`/goals?year=${year}`);
 }
@@ -730,6 +782,14 @@ export function addGoal(year: number, description: string) {
 
 export function deleteGoal(goalId: number) {
   return requestJson<{ goal_id: number }>(`/goals/${goalId}`, { method: 'DELETE' });
+}
+
+export function setGoalCompleted(goalId: number, completed: boolean) {
+  return requestJson<Goal>(`/goals/${goalId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ completed }),
+  });
 }
 
 export interface RecurringTransaction {
