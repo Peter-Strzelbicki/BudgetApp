@@ -28,7 +28,7 @@ export function InvestmentTrendChart({ points, series, selectedKey, onSelect }: 
   selectedKey: string;
   onSelect: (key: string) => void;
 }) {
-  const [hoveredPoint, setHoveredPoint] = useState<{ label: string; color: string; date: string; value: number } | null>(null);
+  const [hoveredPoint, setHoveredPoint] = useState<{ label: string; color: string; date: string; value: number; x: number; y: number } | null>(null);
 
   if (points.length === 0) {
     return <View style={styles.placeholder}><Text style={styles.placeholderText}>Add a balance update for an account to see it here.</Text></View>;
@@ -64,7 +64,7 @@ export function InvestmentTrendChart({ points, series, selectedKey, onSelect }: 
     <View style={styles.chartWrap}>
       <Text style={[styles.axisValue, styles.axisValueTop]}>{formatCurrency(maxValue)}</Text>
       <Text style={[styles.axisValue, styles.axisValueBottom]}>$0</Text>
-      {hoveredPoint && <View pointerEvents="none" style={styles.tooltip}>
+      {hoveredPoint && <View pointerEvents="none" style={[styles.tooltip, { left: `${(hoveredPoint.x / CHART_WIDTH) * 100}%`, top: hoveredPoint.y - 54 }]}>
         <Text style={[styles.tooltipLabel, { color: hoveredPoint.color }]}>{hoveredPoint.label}</Text>
         <Text style={styles.tooltipValue}>{formatCurrency(hoveredPoint.value)}</Text>
         <Text style={styles.tooltipDate}>{formatDate(hoveredPoint.date)}</Text>
@@ -83,10 +83,10 @@ export function InvestmentTrendChart({ points, series, selectedKey, onSelect }: 
           fill={BudgetColors.surface}
           stroke={item.color}
           strokeWidth={2}
-          onPressIn={() => setHoveredPoint({ label: item.label, color: item.color, date: points[index].date, value: points[index].values[item.key] ?? 0 })}
+          onPressIn={() => setHoveredPoint({ label: item.label, color: item.color, date: points[index].date, value: points[index].values[item.key] ?? 0, x: coord.x, y: coord.y })}
           onPressOut={() => setHoveredPoint(null)}
           {...({
-            onMouseEnter: () => setHoveredPoint({ label: item.label, color: item.color, date: points[index].date, value: points[index].values[item.key] ?? 0 }),
+            onMouseEnter: () => setHoveredPoint({ label: item.label, color: item.color, date: points[index].date, value: points[index].values[item.key] ?? 0, x: coord.x, y: coord.y }),
             onMouseLeave: () => setHoveredPoint(null),
           } as any)}
         />))}
@@ -129,7 +129,7 @@ const styles = StyleSheet.create({
   legendText: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '700' },
   legendValue: { fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' },
   chartWrap: { position: 'relative' },
-  tooltip: { position: 'absolute', zIndex: 2, top: 10, left: 12, minWidth: 142, padding: 9, borderRadius: 7, backgroundColor: BudgetColors.surface, borderWidth: 1, borderColor: BudgetColors.line, shadowColor: BudgetColors.ink, shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 3 },
+  tooltip: { position: 'absolute', zIndex: 2, minWidth: 142, padding: 9, borderRadius: 7, backgroundColor: BudgetColors.surface, borderWidth: 1, borderColor: BudgetColors.line, shadowColor: BudgetColors.ink, shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 3, transform: [{ translateX: -71 }] },
   tooltipLabel: { fontFamily: Fonts.sans, fontSize: 10, fontWeight: '800' },
   tooltipValue: { marginTop: 2, color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 15, fontWeight: '900' },
   tooltipDate: { marginTop: 2, color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 10 },
