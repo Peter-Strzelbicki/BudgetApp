@@ -58,7 +58,6 @@ export function ContributionPanel({ summary, action, style }: {
                     <Text style={styles.name}>{person.name}</Text>
                     <Text style={styles.percentage}>{person.income_percentage.toFixed(1)}%</Text>
                   </View>
-                  <Text style={styles.detail}>
                   <View style={styles.targetLine}>
                     <Text style={styles.detail}>
                       {formatCurrency(person.biweekly_share, 2)} biweekly joint target
