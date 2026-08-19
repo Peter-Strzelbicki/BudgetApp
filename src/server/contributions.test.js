@@ -55,6 +55,7 @@ test("subtracts personal expenses from the upcoming biweekly joint target", () =
     incomeConfig: [{ person_id: 1, biweekly_amount: 2000, payday_anchor: "2026-08-14" }],
     personalExpenses: [{ person_id: 1, transaction_date: "2026-08-01", amount: 300 }],
     plannedExpenses: 2000,
+    personalExpensesBudget: [{ person_id: 1, amount: 2000 }],
     month: 8,
     year: 2026,
     asOfDate: "2026-08-01",
@@ -73,6 +74,7 @@ test("shows a person ahead when expenses exceed the upcoming biweekly target", (
     incomeConfig: [{ person_id: 1, biweekly_amount: 2000, payday_anchor: "2026-08-14" }],
     personalExpenses: [{ person_id: 1, transaction_date: "2026-08-01", amount: 1200 }],
     plannedExpenses: 2000,
+    personalExpensesBudget: [{ person_id: 1, amount: 2000 }],
     month: 8,
     year: 2026,
     asOfDate: "2026-08-01",
@@ -402,4 +404,82 @@ test("returns included expense rows scoped to the active pay statement window", 
   assert.equal(summary.people[0].included_expense_count, 2);
   assert.equal(summary.people[0].included_expenses[0].subcategory, "Gas");
   assert.equal(summary.people[0].included_expenses[1].subcategory, "Pantry");
+});
+
+test("uses each person's own Personal Expenses budget line for the joint target from August 2026 onward", () => {
+  const summary = calculateContributionSummary({
+    people: [
+      { person_id: 1, name: "Peter" },
+      { person_id: 2, name: "Sailah" },
+    ],
+    incomeConfig: [
+      { person_id: 1, biweekly_amount: 2103.57 },
+      { person_id: 2, biweekly_amount: 2011.70 },
+    ],
+    personalExpenses: [],
+    plannedExpenses: 0,
+    personalExpensesBudget: [
+      { person_id: 1, amount: 682.78 },
+      { person_id: 2, amount: 652.97 },
+    ],
+    month: 8,
+    year: 2026,
+  });
+
+  assert.equal(summary.uses_personal_expense_budgets, true);
+  assert.equal(summary.people[0].personal_expenses_budget, 682.78);
+  assert.equal(summary.people[0].monthly_share, 3524.36);
+  assert.equal(summary.people[0].biweekly_share, 1762.18);
+  assert.equal(summary.people[1].personal_expenses_budget, 652.97);
+  assert.equal(summary.people[1].monthly_share, 3370.43);
+  assert.equal(summary.people[1].biweekly_share, 1685.22);
+});
+
+test("keeps the legacy shared-budget split for months before August 2026", () => {
+  const summary = calculateContributionSummary({
+    people: [{ person_id: 1, name: "Peter" }],
+    incomeConfig: [{ person_id: 1, biweekly_amount: 2103.57 }],
+    personalExpenses: [],
+    plannedExpenses: 3524.36,
+    personalExpensesBudget: [{ person_id: 1, amount: 682.78 }],
+    month: 7,
+    year: 2026,
+  });
+
+  assert.equal(summary.uses_personal_expense_budgets, false);
+  assert.equal(summary.people[0].monthly_share, 3524.36);
+  assert.equal(summary.people[0].biweekly_share, 1762.18);
+});
+
+test("does not double-count a transaction posted under a person's own Personal Expenses budget line", () => {
+  const summary = calculateContributionSummary({
+    people: [{ person_id: 1, name: "Peter" }],
+    incomeConfig: [{ person_id: 1, biweekly_amount: 2103.57, payday_anchor: "2026-08-07" }],
+    personalExpenses: [{ person_id: 1, transaction_date: "2026-08-05", amount: 682.78, subcategory: "Personal Expenses - Peter" }],
+    plannedExpenses: 0,
+    personalExpensesBudget: [{ person_id: 1, amount: 682.78 }],
+    month: 8,
+    year: 2026,
+    asOfDate: "2026-08-19",
+  });
+
+  assert.equal(summary.people[0].paid_personally, 0);
+  assert.equal(summary.people[0].included_expense_count, 0);
+  assert.equal(summary.people[0].transfer_due, 1762.18);
+});
+
+test("still counts a shared expense fronted personally even when a Personal Expenses budget line exists", () => {
+  const summary = calculateContributionSummary({
+    people: [{ person_id: 1, name: "Peter" }],
+    incomeConfig: [{ person_id: 1, biweekly_amount: 2103.57, payday_anchor: "2026-08-07" }],
+    personalExpenses: [{ person_id: 1, transaction_date: "2026-08-05", amount: 100, subcategory: "Groceries" }],
+    plannedExpenses: 0,
+    personalExpensesBudget: [{ person_id: 1, amount: 682.78 }],
+    month: 8,
+    year: 2026,
+    asOfDate: "2026-08-19",
+  });
+
+  assert.equal(summary.people[0].paid_personally, 100);
+  assert.equal(summary.people[0].transfer_due, 1662.18);
 });

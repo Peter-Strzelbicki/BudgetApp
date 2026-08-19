@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import { EmptyState, ErrorNotice, formatCurrency, Page, PageHeading, Panel, SectionHeader, StickyControlRow, YearSwitcher } from '@/components/budget-ui';
-import { BudgetLine, getBudgetLines, getBudgetTotal, getTransactions, Transaction } from '@/constants/api';
+import { BudgetLine, getBudgetLines, getBudgetTotal, getContributionSummary, getTransactions, Transaction } from '@/constants/api';
 import { BudgetColors, Fonts } from '@/constants/theme';
 import { getTrackedMonthsForYear, TRACKING_START_YEAR } from '@/constants/tracking-period';
 
@@ -69,12 +69,17 @@ export default function InsightsScreen() {
         setTransactions([]);
         return;
       }
-      const [lineRows, totalRows, transactionRows] = await Promise.all([
+      const [lineRows, totalRows, contributionRows, transactionRows] = await Promise.all([
         Promise.all(trackedMonths.map(monthValue => getBudgetLines(monthValue, targetYear))),
         Promise.all(trackedMonths.map(monthValue => getBudgetTotal(monthValue, targetYear))),
+        Promise.all(trackedMonths.map(monthValue => getContributionSummary(monthValue, targetYear))),
         getTransactions(undefined, targetYear),
       ]);
-      setMonthlyBudgets(trackedMonths.map((monthValue, index) => ({ month: monthValue, lines: lineRows[index], totalBudget: totalRows[index] })));
+      setMonthlyBudgets(trackedMonths.map((monthValue, index) => ({
+        month: monthValue,
+        lines: lineRows[index],
+        totalBudget: totalRows[index].total_budget_mode === 'automatic' ? contributionRows[index].household_income : totalRows[index].total_budget,
+      })));
       setTransactions(transactionRows);
     } catch (loadError) { setError(loadError instanceof Error ? loadError.message : 'Insights could not be loaded.'); }
     finally { setLoading(false); }

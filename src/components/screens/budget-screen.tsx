@@ -32,6 +32,7 @@ export default function BudgetScreen() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [totalBudget, setTotalBudget] = useState<number | null>(null);
+  const [totalBudgetMode, setTotalBudgetMode] = useState<'automatic' | 'manual'>('automatic');
   const [totalBudgetDraft, setTotalBudgetDraft] = useState('');
   const [savingTotalBudget, setSavingTotalBudget] = useState(false);
   const [templates, setTemplates] = useState<BudgetTemplate[]>([]);
@@ -56,8 +57,9 @@ export default function BudgetScreen() {
       setContribution(contributionRows);
       setCategories(categoryRows);
       setDrafts(Object.fromEntries(rows.map(line => [line.subcategory_id, String(line.projected_amount)])));
-      setTotalBudget(cap);
-      setTotalBudgetDraft(cap === null ? '' : String(cap));
+      setTotalBudget(cap.total_budget);
+      setTotalBudgetMode(cap.total_budget_mode);
+      setTotalBudgetDraft(cap.total_budget === null ? '' : String(cap.total_budget));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'The budget could not be loaded.');
     } finally {
@@ -169,7 +171,7 @@ export default function BudgetScreen() {
   };
 
   const saveTotalBudget = async () => {
-    const trimmed = totalBudgetDraft.trim();
+    const trimmed = totalBudgetMode === 'automatic' ? '' : totalBudgetDraft.trim();
     const parsed = trimmed === '' ? null : Number(trimmed);
     if (parsed !== null && (!Number.isFinite(parsed) || parsed < 0)) {
       setError('Enter a valid total budget amount.');
@@ -178,10 +180,11 @@ export default function BudgetScreen() {
     setSavingTotalBudget(true);
     setError(null);
     try {
-      const saved = await saveBudgetTotal(month, year, parsed);
-      setTotalBudget(saved);
-      setTotalBudgetDraft(saved === null ? '' : String(saved));
-      setNotice(saved === null ? 'Monthly budget cap cleared.' : `Monthly budget cap set to ${formatCurrency(saved)}.`);
+      const saved = await saveBudgetTotal(month, year, parsed, totalBudgetMode);
+      setTotalBudget(saved.total_budget);
+      setTotalBudgetMode(saved.total_budget_mode);
+      setTotalBudgetDraft(saved.total_budget === null ? '' : String(saved.total_budget));
+      setNotice(totalBudgetMode === 'automatic' ? 'Monthly budget cap now follows combined household income.' : saved.total_budget === null ? 'Monthly budget cap cleared.' : `Monthly budget cap set to ${formatCurrency(saved.total_budget)}.`);
     } catch (totalError) {
       setError(totalError instanceof Error ? totalError.message : 'The monthly budget cap could not be saved.');
     } finally {
@@ -260,7 +263,8 @@ export default function BudgetScreen() {
     return result;
   }, {});
   const isUpcomingMonth = year > now.getFullYear() || (year === now.getFullYear() && month > now.getMonth() + 1);
-  const capOverage = totalBudget === null ? 0 : Math.round((planned - totalBudget) * 100) / 100;
+  const effectiveBudgetCap = totalBudgetMode === 'automatic' ? contribution?.household_income ?? 0 : totalBudget;
+  const effectiveCapOverage = effectiveBudgetCap === null ? 0 : Math.round((planned - effectiveBudgetCap) * 100) / 100;
 
   return (
     <Page>
@@ -281,11 +285,11 @@ export default function BudgetScreen() {
           </Text>
         </View>
       )}
-      {totalBudget !== null && capOverage > 0 && (
+      {effectiveBudgetCap !== null && effectiveCapOverage > 0 && (
         <View style={styles.capWarning}>
           <AlertTriangle color={BudgetColors.warningInk} size={17} />
           <Text style={styles.capWarningText}>
-            Planned budget is {formatCurrency(capOverage)} over the {formatCurrency(totalBudget)} monthly cap.
+            Planned budget is {formatCurrency(effectiveCapOverage)} over the {formatCurrency(effectiveBudgetCap)} monthly cap.
           </Text>
         </View>
       )}
@@ -295,17 +299,26 @@ export default function BudgetScreen() {
         <StatCard label={remaining >= 0 ? 'Remaining' : 'Over plan'} value={formatCurrency(Math.abs(remaining))} detail={planned > 0 ? `${Math.round(actual / planned * 100)}% used` : 'Enter a plan below'} accent={remaining >= 0 ? BudgetColors.gold : BudgetColors.coral} />
       </View>
       <Panel>
-        <SectionHeader title="Monthly budget cap" detail="Set the most this month can allocate across every category" />
+        <SectionHeader title="Monthly budget cap" detail={totalBudgetMode === 'automatic' ? 'Automatically follows combined household income, including extra income' : 'Manual override for this month'} />
         <View style={styles.capRow}>
-          <View style={styles.inputWrap}>
+          <View style={styles.modeChoices}>
+            <Pressable onPress={() => setTotalBudgetMode('automatic')} style={({ pressed }) => [styles.modeChoice, totalBudgetMode === 'automatic' && styles.modeChoiceActive, pressed && styles.pressed]}>
+              <Text style={[styles.modeChoiceText, totalBudgetMode === 'automatic' && styles.modeChoiceTextActive]}>Automatic</Text>
+            </Pressable>
+            <Pressable onPress={() => { setTotalBudgetMode('manual'); setTotalBudgetDraft(current => current || String(contribution?.household_income ?? '')); }} style={({ pressed }) => [styles.modeChoice, totalBudgetMode === 'manual' && styles.modeChoiceActive, pressed && styles.pressed]}>
+              <Text style={[styles.modeChoiceText, totalBudgetMode === 'manual' && styles.modeChoiceTextActive]}>Manual</Text>
+            </Pressable>
+          </View>
+          <View style={[styles.inputWrap, totalBudgetMode === 'automatic' && styles.disabled]}>
             <Text style={styles.currency}>$</Text>
             <TextInput
-              value={totalBudgetDraft}
+              value={totalBudgetMode === 'automatic' ? String(contribution?.household_income ?? 0) : totalBudgetDraft}
               onChangeText={value => setTotalBudgetDraft(value.replace(/[^0-9.]/g, ''))}
               placeholder="No cap set"
               placeholderTextColor={BudgetColors.faint}
               keyboardType="decimal-pad"
               style={styles.input}
+              editable={totalBudgetMode === 'manual'}
             />
           </View>
           <AnimatedIconButton disabled={savingTotalBudget} onPress={saveTotalBudget} style={[styles.secondaryButton, savingTotalBudget && styles.disabled]}>
@@ -478,6 +491,11 @@ const styles = StyleSheet.create({
   capWarning: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12, borderRadius: 7, backgroundColor: BudgetColors.warningSurface, borderWidth: 1, borderColor: BudgetColors.warningLine },
   capWarningText: { flex: 1, color: BudgetColors.warningInk, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '700' },
   capRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10 },
+  modeChoices: { flexDirection: 'row', gap: 6 },
+  modeChoice: { height: 40, paddingHorizontal: 11, borderRadius: 7, borderWidth: 1, borderColor: BudgetColors.line, backgroundColor: BudgetColors.canvas, justifyContent: 'center' },
+  modeChoiceActive: { borderColor: BudgetColors.green, backgroundColor: BudgetColors.greenSoft },
+  modeChoiceText: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '800' },
+  modeChoiceTextActive: { color: BudgetColors.green },
   composer: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   addButton: { height: 44, paddingHorizontal: 15, borderRadius: 7, backgroundColor: BudgetColors.green, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 },
   addText: { color: BudgetColors.surface, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' },

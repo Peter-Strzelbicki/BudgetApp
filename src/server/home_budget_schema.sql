@@ -85,6 +85,7 @@ CREATE TABLE dbo.budget_periods (
     year SMALLINT NOT NULL,
     month SMALLINT NOT NULL CHECK (month BETWEEN 1 AND 12),
     total_budget DECIMAL(10,2) NULL,
+    total_budget_mode VARCHAR(10) NOT NULL DEFAULT 'automatic',
     CONSTRAINT UQ_budget_periods_year_month UNIQUE (year, month)
 );
 

@@ -1,4 +1,4 @@
-import { ArrowDownToLine, CircleDollarSign } from 'lucide-react-native';
+import { ArrowDownToLine, CircleDollarSign, Info } from 'lucide-react-native';
 import { ReactNode, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleProp, StyleSheet, Text, useWindowDimensions, View, ViewStyle } from 'react-native';
 
@@ -13,6 +13,7 @@ export function ContributionPanel({ summary, action, style }: {
 }) {
   const compact = useWindowDimensions().width < 520;
   const [selectedPersonId, setSelectedPersonId] = useState<number | null>(null);
+  const [infoPersonId, setInfoPersonId] = useState<number | null>(null);
 
   const notConfigured = !summary || summary.household_income <= 0;
   const selectedPerson = summary?.people.find(person => person.person_id === selectedPersonId) ?? null;
@@ -22,7 +23,9 @@ export function ContributionPanel({ summary, action, style }: {
       <SectionHeader
         title="Joint balance by payday"
         detail={summary && !notConfigured
-          ? `${formatCurrency(summary.planned_expenses, 2)} joint monthly plan - biweekly target minus expenses paid`
+          ? summary.uses_personal_expense_budgets
+            ? `${formatCurrency(summary.planned_expenses, 2)} shared budget this month \u00b7 your target = pay minus your own Personal Expenses budget`
+            : `${formatCurrency(summary.planned_expenses, 2)} joint monthly plan - biweekly target minus expenses paid`
           : 'Configure bi-weekly pay with the $ button'}
         action={action}
       />
@@ -59,6 +62,42 @@ export function ContributionPanel({ summary, action, style }: {
                     {formatCurrency(person.biweekly_share, 2)} biweekly joint target
                     {person.next_pay_date ? ` - next ${formatShortDate(person.next_pay_date)}` : ''}
                   </Text>
+                  {summary && (
+                    <View style={styles.infoWrap}>
+                      <Pressable
+                        accessibilityLabel={`How ${person.name}'s biweekly joint target is calculated`}
+                        onPress={event => {
+                          event.stopPropagation();
+                          setInfoPersonId(current => current === person.person_id ? null : person.person_id);
+                        }}
+                        {...({
+                          onMouseEnter: () => setInfoPersonId(person.person_id),
+                          onMouseLeave: () => setInfoPersonId(current => current === person.person_id ? null : current),
+                        } as object)}
+                        style={styles.infoButton}>
+                        <Info color={BudgetColors.faint} size={13} />
+                      </Pressable>
+                      {infoPersonId === person.person_id && (
+                        <View pointerEvents="none" style={styles.infoTooltip}>
+                          <Text style={styles.infoTooltipTitle}>How this target is calculated</Text>
+                          {summary.uses_personal_expense_budgets ? (
+                            <>
+                              <Text style={styles.infoTooltipLine}>Monthly pay: {formatCurrency(person.biweekly_amount, 2)} x {summary.pay_periods} = {formatCurrency(person.biweekly_amount * summary.pay_periods, 2)}</Text>
+                              <Text style={styles.infoTooltipLine}>Your Personal Expenses budget: {formatCurrency(person.personal_expenses_budget, 2)}</Text>
+                              <Text style={styles.infoTooltipResult}>{formatCurrency(person.biweekly_amount * summary.pay_periods, 2)} - {formatCurrency(person.personal_expenses_budget, 2)} = {formatCurrency(person.monthly_share, 2)} / {summary.pay_periods} paydays = {formatCurrency(person.biweekly_share, 2)}</Text>
+                            </>
+                          ) : (
+                            <>
+                              <Text style={styles.infoTooltipLine}>Household plan (excl. personal expenses): {formatCurrency(summary.planned_expenses, 2)}</Text>
+                              <Text style={styles.infoTooltipLine}>Your income share: {person.income_percentage.toFixed(1)}%</Text>
+                              <Text style={styles.infoTooltipLine}>Monthly share: {person.income_percentage.toFixed(1)}% x {formatCurrency(summary.planned_expenses, 2)} = {formatCurrency(person.monthly_share, 2)}</Text>
+                              <Text style={styles.infoTooltipResult}>{formatCurrency(person.monthly_share, 2)} / {summary.pay_periods} paydays = {formatCurrency(person.biweekly_share, 2)}</Text>
+                            </>
+                          )}
+                        </View>
+                      )}
+                    </View>
+                  )}
                   <Text style={styles.detail}>
                     {formatCurrency(person.paid_personally, 2)} expenses paid personally since {formatLastPaymentAnchor(person.last_joint_payment_at, person.last_joint_payment_date)} - {formatCurrency(person.transferred_to_joint, 2)} sent to joint this month
                   </Text>
@@ -150,6 +189,12 @@ const styles = StyleSheet.create({
   percentage: { color: BudgetColors.blue, fontFamily: Fonts.sans, fontSize: 10, fontWeight: '800', backgroundColor: BudgetColors.blueSoft, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
   detail: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11, lineHeight: 16 },
   tapHint: { color: BudgetColors.faint, fontFamily: Fonts.sans, fontSize: 10, fontWeight: '700' },
+  infoWrap: { position: 'relative', alignSelf: 'flex-start' },
+  infoButton: { width: 20, height: 20, alignItems: 'center', justifyContent: 'center' },
+  infoTooltip: { position: 'absolute', zIndex: 20, top: 22, left: 0, width: 250, padding: 11, borderRadius: 8, backgroundColor: BudgetColors.surface, borderWidth: 1.5, borderColor: BudgetColors.ink, shadowColor: '#000000', shadowOpacity: 0.32, shadowRadius: 16, shadowOffset: { width: 0, height: 8 }, elevation: 12, gap: 3 },
+  infoTooltipTitle: { color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 10, fontWeight: '800', marginBottom: 2 },
+  infoTooltipLine: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 10, lineHeight: 14 },
+  infoTooltipResult: { color: BudgetColors.green, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '800', marginTop: 3 },
   amountCopy: { minWidth: 132, alignItems: 'flex-end', gap: 4 },
   amountCopyCompact: { width: '100%', paddingLeft: 50, alignItems: 'flex-start' },
   amount: { color: BudgetColors.ink, fontFamily: Fonts.serif, fontSize: 21, fontWeight: '700' },

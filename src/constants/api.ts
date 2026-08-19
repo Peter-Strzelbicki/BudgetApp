@@ -82,6 +82,7 @@ interface ContributionPerson {
   extra_income: number;
   income: number;
   income_percentage: number;
+  personal_expenses_budget: number;
   monthly_share: number;
   biweekly_share: number;
   accrued_share: number;
@@ -132,6 +133,7 @@ export interface ContributionSummary {
   household_income: number;
   planned_expenses: number;
   pay_periods: number;
+  uses_personal_expense_budgets: boolean;
   as_of_date: string;
   people: ContributionPerson[];
 }
@@ -554,11 +556,13 @@ export async function getContributionSummary(month: number, year: number): Promi
     household_income: number | string;
     planned_expenses: number | string;
     pay_periods: number | string;
+    uses_personal_expense_budgets?: boolean;
     as_of_date: string;
-    people: (Omit<ContributionPerson, 'biweekly_amount' | 'income' | 'income_percentage' | 'monthly_share' | 'biweekly_share' | 'accrued_share' | 'next_payday_share' | 'paid_personally' | 'included_expense_count' | 'included_expenses' | 'transferred_to_joint' | 'remaining_due' | 'monthly_remaining' | 'installments_due' | 'remaining_pay_periods' | 'transfer_due' | 'credit'> & {
+    people: (Omit<ContributionPerson, 'biweekly_amount' | 'income' | 'income_percentage' | 'personal_expenses_budget' | 'monthly_share' | 'biweekly_share' | 'accrued_share' | 'next_payday_share' | 'paid_personally' | 'included_expense_count' | 'included_expenses' | 'transferred_to_joint' | 'remaining_due' | 'monthly_remaining' | 'installments_due' | 'remaining_pay_periods' | 'transfer_due' | 'credit'> & {
       biweekly_amount: number | string;
       income: number | string;
       income_percentage: number | string;
+      personal_expenses_budget: number | string;
       monthly_share: number | string;
       biweekly_share: number | string;
       accrued_share: number | string;
@@ -588,6 +592,7 @@ export async function getContributionSummary(month: number, year: number): Promi
     household_income: Number(result.household_income),
     planned_expenses: Number(result.planned_expenses),
     pay_periods: Number(result.pay_periods),
+    uses_personal_expense_budgets: result.uses_personal_expense_budgets === true,
     as_of_date: result.as_of_date,
     people: result.people.map(person => ({
       ...person,
@@ -596,6 +601,7 @@ export async function getContributionSummary(month: number, year: number): Promi
       extra_income: Number((person as { extra_income?: number | string }).extra_income ?? 0),
       income: Number(person.income),
       income_percentage: Number(person.income_percentage),
+      personal_expenses_budget: Number((person as { personal_expenses_budget?: number | string }).personal_expenses_budget ?? 0),
       monthly_share: Number(person.monthly_share),
       biweekly_share: Number((person as { biweekly_share?: number | string }).biweekly_share ?? Number(person.monthly_share) / Number(result.pay_periods)),
       accrued_share: Number((person as { accrued_share?: number | string }).accrued_share ?? 0),
@@ -717,20 +723,26 @@ export function saveBudgetLine(
   );
 }
 
-export async function getBudgetTotal(month: number, year: number): Promise<number | null> {
-  const result = await requestJson<{ total_budget: number | string | null }>(
+export async function getBudgetTotal(month: number, year: number): Promise<{ total_budget: number | null; total_budget_mode: 'automatic' | 'manual' }> {
+  const result = await requestJson<{ total_budget: number | string | null; total_budget_mode?: 'automatic' | 'manual' }>(
     `/budget-periods?month=${month}&year=${year}`,
   );
-  return result.total_budget === null ? null : Number(result.total_budget);
+  return {
+    total_budget: result.total_budget === null ? null : Number(result.total_budget),
+    total_budget_mode: result.total_budget_mode === 'manual' ? 'manual' : 'automatic',
+  };
 }
 
-export async function saveBudgetTotal(month: number, year: number, totalBudget: number | null): Promise<number | null> {
-  const result = await requestJson<{ total_budget: number | string | null }>('/budget-periods', {
+export async function saveBudgetTotal(month: number, year: number, totalBudget: number | null, mode: 'automatic' | 'manual'): Promise<{ total_budget: number | null; total_budget_mode: 'automatic' | 'manual' }> {
+  const result = await requestJson<{ total_budget: number | string | null; total_budget_mode: 'automatic' | 'manual' }>('/budget-periods', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ month, year, total_budget: totalBudget }),
+    body: JSON.stringify({ month, year, total_budget: totalBudget, total_budget_mode: mode }),
   });
-  return result.total_budget === null ? null : Number(result.total_budget);
+  return {
+    total_budget: result.total_budget === null ? null : Number(result.total_budget),
+    total_budget_mode: result.total_budget_mode,
+  };
 }
 
 export interface BudgetTemplate {

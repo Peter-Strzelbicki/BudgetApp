@@ -392,6 +392,13 @@ async function ensureFeatureSchema() {
       ALTER TABLE public.budget_periods
       ADD COLUMN IF NOT EXISTS total_budget NUMERIC(10, 2)`);
     await query(`
+      ALTER TABLE public.budget_periods
+      ADD COLUMN IF NOT EXISTS total_budget_mode VARCHAR(10) NOT NULL DEFAULT 'automatic'`);
+    await query(`
+      UPDATE public.budget_periods
+      SET total_budget_mode = 'manual'
+      WHERE total_budget IS NOT NULL AND total_budget_mode = 'automatic'`);
+    await query(`
       CREATE TABLE IF NOT EXISTS public.budget_templates (
         template_id BIGSERIAL PRIMARY KEY,
         name VARCHAR(100) NOT NULL UNIQUE,
@@ -404,6 +411,9 @@ async function ensureFeatureSchema() {
         projected_amount NUMERIC(10, 2) NOT NULL DEFAULT 0,
         PRIMARY KEY (template_id, subcategory_id)
       )`);
+    const investmentAccountsExisted = Boolean(
+      (await query(`SELECT to_regclass('public.investment_accounts') IS NOT NULL AS existed`))[0]?.existed
+    );
     await query(`
       CREATE TABLE IF NOT EXISTS public.investment_accounts (
         account_id BIGSERIAL PRIMARY KEY,
@@ -432,13 +442,16 @@ async function ensureFeatureSchema() {
     await query(`
       CREATE INDEX IF NOT EXISTS ix_investment_balances_account_date
       ON public.investment_balances (account_id, as_of_date)`);
-    await query(`
-      INSERT INTO public.investment_accounts (name, institution, account_type, display_order)
-      VALUES
-        ('Wealthsimple TFSA', 'Wealthsimple', 'TFSA', 1),
-        ('Quadrus TFSA', 'Quadrus', 'TFSA', 2),
-        ('Quadrus RRSP', 'Quadrus', 'RRSP', 3)
-      ON CONFLICT (name) DO NOTHING`);
+    // Seed starter accounts only on a genuinely fresh install; once the table exists, user deletions must stick across restarts.
+    if (!investmentAccountsExisted) {
+      await query(`
+        INSERT INTO public.investment_accounts (name, institution, account_type, display_order)
+        VALUES
+          ('Wealthsimple TFSA', 'Wealthsimple', 'TFSA', 1),
+          ('Quadrus TFSA', 'Quadrus', 'TFSA', 2),
+          ('Quadrus RRSP', 'Quadrus', 'RRSP', 3)
+        ON CONFLICT (name) DO NOTHING`);
+    }
     return;
   }
 
@@ -604,6 +617,13 @@ async function ensureFeatureSchema() {
     IF COL_LENGTH('dbo.budget_periods', 'total_budget') IS NULL
       ALTER TABLE dbo.budget_periods ADD total_budget DECIMAL(10,2) NULL`);
   await query(`
+    IF COL_LENGTH('dbo.budget_periods', 'total_budget_mode') IS NULL
+      ALTER TABLE dbo.budget_periods ADD total_budget_mode VARCHAR(10) NOT NULL CONSTRAINT DF_budget_periods_total_budget_mode DEFAULT ('automatic')`);
+  await query(`
+    UPDATE dbo.budget_periods
+    SET total_budget_mode = 'manual'
+    WHERE total_budget IS NOT NULL AND total_budget_mode = 'automatic'`);
+  await query(`
     IF OBJECT_ID(N'dbo.budget_templates', N'U') IS NULL
     BEGIN
       CREATE TABLE dbo.budget_templates (
@@ -625,6 +645,9 @@ async function ensureFeatureSchema() {
           REFERENCES dbo.subcategories(subcategory_id)
       );
     END`);
+  const investmentAccountsExisted = Boolean(
+    (await query(`SELECT CASE WHEN OBJECT_ID(N'dbo.investment_accounts', N'U') IS NULL THEN 0 ELSE 1 END AS existed`))[0]?.existed
+  );
   await query(`
     IF OBJECT_ID(N'dbo.investment_accounts', N'U') IS NULL
     BEGIN
@@ -655,13 +678,16 @@ async function ensureFeatureSchema() {
   await query(`
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_investment_balances_account_date' AND object_id = OBJECT_ID(N'dbo.investment_balances'))
       CREATE INDEX IX_investment_balances_account_date ON dbo.investment_balances(account_id, as_of_date)`);
-  await query(`
-    IF NOT EXISTS (SELECT 1 FROM dbo.investment_accounts WHERE name = N'Wealthsimple TFSA')
-      INSERT INTO dbo.investment_accounts (name, institution, account_type, display_order) VALUES (N'Wealthsimple TFSA', N'Wealthsimple', N'TFSA', 1);
-    IF NOT EXISTS (SELECT 1 FROM dbo.investment_accounts WHERE name = N'Quadrus TFSA')
-      INSERT INTO dbo.investment_accounts (name, institution, account_type, display_order) VALUES (N'Quadrus TFSA', N'Quadrus', N'TFSA', 2);
-    IF NOT EXISTS (SELECT 1 FROM dbo.investment_accounts WHERE name = N'Quadrus RRSP')
-      INSERT INTO dbo.investment_accounts (name, institution, account_type, display_order) VALUES (N'Quadrus RRSP', N'Quadrus', N'RRSP', 3);`);
+  // Seed starter accounts only on a genuinely fresh install; once the table exists, user deletions must stick across restarts.
+  if (!investmentAccountsExisted) {
+    await query(`
+      IF NOT EXISTS (SELECT 1 FROM dbo.investment_accounts WHERE name = N'Wealthsimple TFSA')
+        INSERT INTO dbo.investment_accounts (name, institution, account_type, display_order) VALUES (N'Wealthsimple TFSA', N'Wealthsimple', N'TFSA', 1);
+      IF NOT EXISTS (SELECT 1 FROM dbo.investment_accounts WHERE name = N'Quadrus TFSA')
+        INSERT INTO dbo.investment_accounts (name, institution, account_type, display_order) VALUES (N'Quadrus TFSA', N'Quadrus', N'TFSA', 2);
+      IF NOT EXISTS (SELECT 1 FROM dbo.investment_accounts WHERE name = N'Quadrus RRSP')
+        INSERT INTO dbo.investment_accounts (name, institution, account_type, display_order) VALUES (N'Quadrus RRSP', N'Quadrus', N'RRSP', 3);`);
+  }
 }
 
 app.get("/", (req, res) => {
@@ -1174,7 +1200,7 @@ app.get("/contributions", async (req, res) => {
       ? `EXTRACT(MONTH FROM ${column}) = @month AND EXTRACT(YEAR FROM ${column}) = @year`
       : `MONTH(${column}) = @month AND YEAR(${column}) = @year`;
 
-    const [income, extraIncome, paychecks, jointPayments, personalExpenses, lastJointPayments, plannedRows] = await Promise.all([
+    const [income, extraIncome, paychecks, jointPayments, personalExpenses, lastJointPayments, plannedRows, personalExpensesBudgetRows] = await Promise.all([
       loadIncomeConfiguration(period.month, period.year),
       query(
         `SELECT person_id, SUM(amount) AS amount
@@ -1227,7 +1253,7 @@ app.get("/contributions", async (req, res) => {
       query(
         `SELECT COALESCE(SUM(
            CASE
-             WHEN LOWER(COALESCE(sc.name, '')) = @personal_expenses_name THEN 0
+             WHEN LOWER(COALESCE(sc.name, '')) LIKE @personal_expenses_prefix THEN 0
              ELSE COALESCE(bl.projected_amount, 0)
            END
          ), 0) AS planned_expenses
@@ -1235,7 +1261,21 @@ app.get("/contributions", async (req, res) => {
          LEFT JOIN ${prefix}.budget_lines bl ON bl.period_id = bp.period_id
          LEFT JOIN ${prefix}.subcategories sc ON sc.subcategory_id = bl.subcategory_id
          WHERE bp.month = @month AND bp.year = @year`,
-        { ...period, personal_expenses_name: "personal expenses" }
+        { ...period, personal_expenses_prefix: "personal expenses%" }
+      ),
+      query(
+        dbType === "postgres"
+          ? `SELECT p.person_id, COALESCE(bl.projected_amount, 0) AS amount
+             FROM ${prefix}.people p
+             JOIN ${prefix}.subcategories sc ON LOWER(sc.name) = LOWER('Personal Expenses - ' || p.name)
+             LEFT JOIN ${prefix}.budget_periods bp ON bp.month = @month AND bp.year = @year
+             LEFT JOIN ${prefix}.budget_lines bl ON bl.period_id = bp.period_id AND bl.subcategory_id = sc.subcategory_id`
+          : `SELECT p.person_id, COALESCE(bl.projected_amount, 0) AS amount
+             FROM ${prefix}.people p
+             JOIN ${prefix}.subcategories sc ON LOWER(sc.name) = LOWER('Personal Expenses - ' + p.name)
+             LEFT JOIN ${prefix}.budget_periods bp ON bp.month = @month AND bp.year = @year
+             LEFT JOIN ${prefix}.budget_lines bl ON bl.period_id = bp.period_id AND bl.subcategory_id = sc.subcategory_id`,
+        period
       ),
     ]);
 
@@ -1248,6 +1288,7 @@ app.get("/contributions", async (req, res) => {
       lastJointPayments,
       personalExpenses,
       plannedExpenses: plannedRows[0]?.planned_expenses || 0,
+      personalExpensesBudget: personalExpensesBudgetRows.map(row => ({ person_id: row.person_id, amount: row.amount })),
       month: period.month,
       year: period.year,
       asOfDate,
@@ -1981,11 +2022,14 @@ app.get("/budget-periods", async (req, res) => {
     }
 
     const queryText = dbType === "postgres"
-      ? `SELECT total_budget FROM public.budget_periods WHERE month = @month AND year = @year`
-      : `SELECT total_budget FROM dbo.budget_periods WHERE month = @month AND year = @year`;
+      ? `SELECT total_budget, total_budget_mode FROM public.budget_periods WHERE month = @month AND year = @year`
+      : `SELECT total_budget, total_budget_mode FROM dbo.budget_periods WHERE month = @month AND year = @year`;
     const rows = await query(queryText, { month: Number(month), year: Number(year) });
     const totalBudget = rows[0]?.total_budget ?? null;
-    res.json({ total_budget: totalBudget === null ? null : Number(totalBudget) });
+    res.json({
+      total_budget: totalBudget === null ? null : Number(totalBudget),
+      total_budget_mode: rows[0]?.total_budget_mode === 'manual' ? 'manual' : 'automatic',
+    });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Failed to fetch the budget period" });
@@ -1996,12 +2040,13 @@ app.put("/budget-periods", async (req, res) => {
   try {
     const month = Number(req.body.month);
     const year = Number(req.body.year);
+    const mode = req.body.total_budget_mode === 'manual' ? 'manual' : req.body.total_budget_mode === 'automatic' ? 'automatic' : null;
     const rawTotalBudget = req.body.total_budget;
     const totalBudget = rawTotalBudget === null || rawTotalBudget === undefined || rawTotalBudget === ""
       ? null
       : Number(rawTotalBudget);
 
-    if (!Number.isInteger(month) || month < 1 || month > 12 || !Number.isInteger(year)) {
+    if (!Number.isInteger(month) || month < 1 || month > 12 || !Number.isInteger(year) || !mode) {
       return res.status(400).json({ error: "Valid month and year are required" });
     }
     if (totalBudget !== null && (!Number.isFinite(totalBudget) || totalBudget < 0)) {
@@ -2010,28 +2055,29 @@ app.put("/budget-periods", async (req, res) => {
 
     if (dbType === "postgres") {
       const rows = await query(
-        `INSERT INTO public.budget_periods (year, month, total_budget)
-         VALUES (@year, @month, @total_budget)
-         ON CONFLICT (year, month) DO UPDATE SET total_budget = EXCLUDED.total_budget
-         RETURNING total_budget`,
-        { year, month, total_budget: totalBudget }
+        `INSERT INTO public.budget_periods (year, month, total_budget, total_budget_mode)
+         VALUES (@year, @month, @total_budget, @total_budget_mode)
+         ON CONFLICT (year, month) DO UPDATE SET total_budget = EXCLUDED.total_budget, total_budget_mode = EXCLUDED.total_budget_mode
+         RETURNING total_budget, total_budget_mode`,
+        { year, month, total_budget: mode === 'manual' ? totalBudget : null, total_budget_mode: mode }
       );
-      return res.json({ total_budget: rows[0].total_budget === null ? null : Number(rows[0].total_budget) });
+      return res.json({ total_budget: rows[0].total_budget === null ? null : Number(rows[0].total_budget), total_budget_mode: rows[0].total_budget_mode });
     }
 
     const db = await getDb();
     const request = db.request();
     request.input("year", mssql.SmallInt, year);
     request.input("month", mssql.SmallInt, month);
-    request.input("total_budget", mssql.Decimal(10, 2), totalBudget);
+    request.input("total_budget", mssql.Decimal(10, 2), mode === 'manual' ? totalBudget : null);
+    request.input("total_budget_mode", mssql.VarChar(10), mode);
     const result = await request.query(`
       IF NOT EXISTS (SELECT 1 FROM dbo.budget_periods WHERE year = @year AND month = @month)
-        INSERT INTO dbo.budget_periods (year, month, total_budget) VALUES (@year, @month, @total_budget);
+        INSERT INTO dbo.budget_periods (year, month, total_budget, total_budget_mode) VALUES (@year, @month, @total_budget, @total_budget_mode);
       ELSE
-        UPDATE dbo.budget_periods SET total_budget = @total_budget WHERE year = @year AND month = @month;
-      SELECT total_budget FROM dbo.budget_periods WHERE year = @year AND month = @month;
+        UPDATE dbo.budget_periods SET total_budget = @total_budget, total_budget_mode = @total_budget_mode WHERE year = @year AND month = @month;
+      SELECT total_budget, total_budget_mode FROM dbo.budget_periods WHERE year = @year AND month = @month;
     `);
-    res.json({ total_budget: result.recordset[0].total_budget === null ? null : Number(result.recordset[0].total_budget) });
+    res.json({ total_budget: result.recordset[0].total_budget === null ? null : Number(result.recordset[0].total_budget), total_budget_mode: result.recordset[0].total_budget_mode });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Failed to save the budget period" });

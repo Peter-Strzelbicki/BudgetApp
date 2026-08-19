@@ -1,6 +1,14 @@
 ﻿const DEFAULT_PAY_PERIODS = 2;
 const BIWEEKLY_DAYS = 14;
 const DAY_MS = 24 * 60 * 60 * 1000;
+// Each person's own "Personal Expenses - Name" budget line replaces the shared-budget split starting this month; earlier months keep their original figures.
+const PERSONAL_EXPENSE_BUDGET_CUTOVER = { year: 2026, month: 8 };
+
+function usesPersonalExpenseBudgets(month, year) {
+  if (!Number.isInteger(month) || !Number.isInteger(year)) return false;
+  if (year !== PERSONAL_EXPENSE_BUDGET_CUTOVER.year) return year > PERSONAL_EXPENSE_BUDGET_CUTOVER.year;
+  return month >= PERSONAL_EXPENSE_BUDGET_CUTOVER.month;
+}
 
 function roundMoney(value) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
@@ -79,6 +87,7 @@ function calculateContributionSummary({
   lastJointPayments = [],
   personalExpenses,
   plannedExpenses,
+  personalExpensesBudget = [],
   month,
   year,
   asOfDate = new Date().toISOString().slice(0, 10),
@@ -88,6 +97,8 @@ function calculateContributionSummary({
   const monthStartTimestamp = Number.isInteger(month) && Number.isInteger(year)
     ? Date.UTC(year, month - 1, 1)
     : null;
+  const usesOwnPersonalExpenseBudget = usesPersonalExpenseBudgets(month, year);
+  const personNameById = new Map(people.map(person => [Number(person.person_id), String(person.name || "").toLowerCase()]));
   const biweeklyByPerson = new Map();
   const paydayAnchorByPerson = new Map();
   for (const config of incomeConfig) {
@@ -127,6 +138,8 @@ function calculateContributionSummary({
     const expenseDateTimestamp = parseIsoDate(expense.transaction_date);
     if (expenseDateTimestamp !== null && expenseDateTimestamp > asOfTimestamp) continue;
     const personId = Number(expense.person_id);
+    // Own Personal Expenses budget line already reduces the target directly, so its transactions must not also offset it here.
+    if (usesOwnPersonalExpenseBudget && typeof expense.subcategory === "string" && expense.subcategory.toLowerCase() === `personal expenses - ${personNameById.get(personId) || ""}`) continue;
     const expenseMomentTimestamp = parseTimestamp(expense.transaction_at || expense.created_at) ?? expenseDateTimestamp;
     const lastPayment = lastJointPaymentByPerson.get(personId);
     if (lastPayment !== undefined) {
@@ -177,11 +190,16 @@ function calculateContributionSummary({
   const extraHouseholdIncome = Array.from(extraByPerson.values()).reduce((sum, amount) => sum + amount, 0);
   const householdIncome = regularHouseholdIncome + extraHouseholdIncome;
   const monthlyExpenses = Number(plannedExpenses) || 0;
+  const personalExpensesBudgetByPerson = new Map();
+  for (const budget of personalExpensesBudget) {
+    personalExpensesBudgetByPerson.set(Number(budget.person_id), Number(budget.amount) || 0);
+  }
 
   return {
     household_income: roundMoney(householdIncome),
     planned_expenses: roundMoney(monthlyExpenses),
     pay_periods: payPeriods,
+    uses_personal_expense_budgets: usesOwnPersonalExpenseBudget,
     people: people.map(person => {
       const personId = Number(person.person_id);
       const biweekly = biweeklyByPerson.get(personId) || 0;
@@ -189,7 +207,10 @@ function calculateContributionSummary({
       const regularMonthlyIncome = biweekly * payPeriods;
       const monthlyIncome = regularMonthlyIncome + extra;
       const incomeShare = regularHouseholdIncome > 0 ? regularMonthlyIncome / regularHouseholdIncome : 0;
-      const monthlyShare = monthlyExpenses * incomeShare;
+      const personalExpensesBudgetAmount = personalExpensesBudgetByPerson.get(personId) || 0;
+      const monthlyShare = usesOwnPersonalExpenseBudget
+        ? Math.max(regularMonthlyIncome - personalExpensesBudgetAmount, 0)
+        : monthlyExpenses * incomeShare;
       const paidPersonally = expensesByPerson.get(personId) || 0;
       const includedExpenses = (includedExpensesByPerson.get(personId) || [])
         .sort(compareExpenseRowsDesc)
@@ -235,6 +256,7 @@ function calculateContributionSummary({
         extra_income: roundMoney(extra),
         income: roundMoney(monthlyIncome),
         income_percentage: incomeShare * 100,
+        personal_expenses_budget: roundMoney(personalExpensesBudgetAmount),
         monthly_share: roundMoney(monthlyShare),
         biweekly_share: roundMoney(biweeklyShare),
         accrued_share: roundMoney(accruedShare),
