@@ -792,6 +792,60 @@ export function setGoalCompleted(goalId: number, completed: boolean) {
   });
 }
 
+export interface InvestmentAccount {
+  account_id: number;
+  name: string;
+  institution: string | null;
+  account_type: 'TFSA' | 'RRSP' | 'OTHER';
+  person_id: number | null;
+  person_name: string | null;
+  latest_balance: number | null;
+  latest_as_of_date: string | null;
+}
+
+export interface InvestmentBalance {
+  balance_id: number;
+  account_id: number;
+  as_of_date: string;
+  balance: number;
+  notes: string | null;
+}
+
+export function getInvestmentAccounts() {
+  return requestJson<InvestmentAccount[]>('/investment-accounts');
+}
+
+export function addInvestmentAccount(account: { name: string; institution?: string; account_type: 'TFSA' | 'RRSP' | 'OTHER'; person_id?: number | null }) {
+  return requestJson<{ account_id: number }>('/investment-accounts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(account),
+  }, 1);
+}
+
+export function deleteInvestmentAccount(accountId: number) {
+  return requestJson<{ account_id: number }>(`/investment-accounts/${accountId}`, { method: 'DELETE' }, 1);
+}
+
+export async function getInvestmentBalances(accountId: number): Promise<InvestmentBalance[]> {
+  const rows = await requestJson<(Omit<InvestmentBalance, 'balance'> & { balance: number | string })[]>(
+    `/investment-balances?account_id=${accountId}`,
+  );
+  return rows.map(row => ({ ...row, balance: Number(row.balance) }));
+}
+
+export function addInvestmentBalance(balance: { account_id: number; as_of_date: string; balance: number; notes?: string }) {
+  return requestJson<{ balance_id: number }>('/investment-balances', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(balance),
+  }, 1);
+}
+
+export function deleteInvestmentBalance(balanceId: number) {
+  return requestJson<{ balance_id: number }>(`/investment-balances/${balanceId}`, { method: 'DELETE' }, 1);
+}
+
 export interface RecurringTransaction {
   recurring_id: number;
   subcategory_id: number;

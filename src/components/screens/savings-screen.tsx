@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { ErrorNotice, formatCurrency, Page, PageHeading, Panel, SectionHeader, StatCard } from '@/components/budget-ui';
+import { InvestmentAccountsPanel } from '@/components/investment-accounts-panel';
 import { getContributionSummary, getTransactions, Transaction } from '@/constants/api';
 import { BudgetColors, Fonts } from '@/constants/theme';
 
@@ -158,6 +159,8 @@ export default function SavingsScreen() {
               </Text>
             </View>
           </Panel>
+
+          <InvestmentAccountsPanel />
         </>
       )}
     </Page>

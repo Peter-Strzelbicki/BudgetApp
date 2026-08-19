@@ -20,6 +20,10 @@ IF OBJECT_ID(N'dbo.budget_template_lines', N'U') IS NOT NULL
     DROP TABLE dbo.budget_template_lines;
 IF OBJECT_ID(N'dbo.budget_templates', N'U') IS NOT NULL
     DROP TABLE dbo.budget_templates;
+IF OBJECT_ID(N'dbo.investment_balances', N'U') IS NOT NULL
+    DROP TABLE dbo.investment_balances;
+IF OBJECT_ID(N'dbo.investment_accounts', N'U') IS NOT NULL
+    DROP TABLE dbo.investment_accounts;
 IF OBJECT_ID(N'dbo.income', N'U') IS NOT NULL
     DROP TABLE dbo.income;
 IF OBJECT_ID(N'dbo.budget_periods', N'U') IS NOT NULL
@@ -36,6 +40,29 @@ CREATE TABLE dbo.people (
     name NVARCHAR(50) NOT NULL UNIQUE,
     is_household BIT NOT NULL DEFAULT 1
 );
+
+CREATE TABLE dbo.investment_accounts (
+    account_id INT IDENTITY(1,1) PRIMARY KEY,
+    name NVARCHAR(100) NOT NULL UNIQUE,
+    institution NVARCHAR(100) NULL,
+    account_type NVARCHAR(20) NOT NULL DEFAULT 'OTHER',
+    person_id INT NULL,
+    display_order SMALLINT NULL,
+    CONSTRAINT FK_investment_accounts_people FOREIGN KEY (person_id)
+        REFERENCES dbo.people(person_id) ON DELETE SET NULL
+);
+
+CREATE TABLE dbo.investment_balances (
+    balance_id INT IDENTITY(1,1) PRIMARY KEY,
+    account_id INT NOT NULL,
+    as_of_date DATE NOT NULL,
+    balance DECIMAL(12,2) NOT NULL CHECK (balance >= 0),
+    notes NVARCHAR(255) NULL,
+    CONSTRAINT FK_investment_balances_accounts FOREIGN KEY (account_id)
+        REFERENCES dbo.investment_accounts(account_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IX_investment_balances_account_date ON dbo.investment_balances(account_id, as_of_date);
 
 CREATE TABLE dbo.categories (
     category_id INT IDENTITY(1,1) PRIMARY KEY,

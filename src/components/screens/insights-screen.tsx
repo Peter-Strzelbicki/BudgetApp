@@ -9,11 +9,13 @@ import { BudgetColors, Fonts } from '@/constants/theme';
 import { getTrackedMonthsForYear, TRACKING_START_YEAR } from '@/constants/tracking-period';
 
 const SAVINGS_CATEGORY = 'Savings/Investments';
+const TRAVEL_CATEGORY = 'Travel';
 const GENERATED_IMPORT_NOTE_PREFIX = 'Imported monthly expense from ';
-const FLEXIBLE_CATEGORIES = new Set(['Entertainment/Subscriptions', 'Food', 'Personal/Home Care', 'Travel']);
+const FLEXIBLE_CATEGORIES = new Set(['Entertainment/Subscriptions', 'Food', 'Personal/Home Care']);
 
 interface BudgetRecommendation {
   category: string;
+  subcategory: string;
   avgSpent: number;
   avgPlanned: number;
   suggestedPlan: number;
@@ -128,17 +130,17 @@ export default function InsightsScreen() {
             />
             {narrow && <TextLink label="Adjust budget" onPress={() => router.push('/budget')} />}
             {insights.recommendations.length === 0 ? (
-              <EmptyState title="Your plan is well calibrated" detail="No category needs a meaningful adjustment based on this year's averages." />
+              <EmptyState title="Your plan is well calibrated" detail="No budget field needs a meaningful adjustment based on this year's averages." />
             ) : (
               <View>
                 {insights.recommendations.map((recommendation, index) => (
-                  <Pressable key={recommendation.category} onPress={() => router.push({ pathname: '/transactions', params: { category: recommendation.category } })} style={({ pressed }) => [styles.recommendation, narrow && styles.recommendationNarrow, index === 0 && styles.rowFirst, pressed && styles.pressed]}>
+                  <Pressable key={`${recommendation.category}::${recommendation.subcategory}`} onPress={() => router.push({ pathname: '/transactions', params: { category: recommendation.category } })} style={({ pressed }) => [styles.recommendation, narrow && styles.recommendationNarrow, index === 0 && styles.rowFirst, pressed && styles.pressed]}>
                     <View style={[styles.recommendationIcon, recommendation.direction === 'raise' ? styles.iconAttention : styles.iconOpportunity]}>
                       <SlidersHorizontal color={recommendation.direction === 'raise' ? BudgetColors.coral : BudgetColors.blue} size={17} />
                     </View>
                     <View style={styles.recommendationBody}>
                       <View style={[styles.recommendationHeading, narrow && styles.itemHeadingNarrow]}>
-                        <Text style={styles.recommendationTitle}>{recommendation.category}</Text>
+                        <Text style={styles.recommendationTitle}>{recommendation.subcategory} <Text style={styles.recommendationCategory}>· {recommendation.category}</Text></Text>
                         <Text style={[styles.recommendationTarget, recommendation.direction === 'raise' ? styles.textAttention : styles.textOpportunity]}>
                           Try {formatCurrency(recommendation.suggestedPlan)}/mo
                         </Text>
@@ -231,27 +233,47 @@ function buildInsights(monthlyBudgets: MonthlyBudget[], transactions: Transactio
   const capHeadroom = latestCappedMonth ? latestCappedMonth.totalBudget! - latestCappedMonth.planned : null;
   const monthsOverCap = capTrackedMonths.filter(month => month.planned > month.totalBudget!);
 
-  const categoryTotals = new Map<string, { actual: number; planned: number }>();
+  const categoryTotals = new Map<string, { actual: number; planned: number; plannedMonths: number }>();
+  const subcategoryTotals = new Map<string, { category: string; subcategory: string; actual: number; planned: number; plannedMonths: number }>();
   trackedMonths.forEach(month => {
     month.lines.forEach(line => {
-      const totals = categoryTotals.get(line.category) ?? { actual: 0, planned: 0 };
+      const totals = categoryTotals.get(line.category) ?? { actual: 0, planned: 0, plannedMonths: 0 };
       totals.actual += line.actual_amount;
       totals.planned += line.projected_amount;
+      if (line.projected_amount > 0) totals.plannedMonths += 1;
       categoryTotals.set(line.category, totals);
+
+      const subcategoryKey = `${line.category}::${line.subcategory}`;
+      const subTotals = subcategoryTotals.get(subcategoryKey) ?? { category: line.category, subcategory: line.subcategory, actual: 0, planned: 0, plannedMonths: 0 };
+      subTotals.actual += line.actual_amount;
+      subTotals.planned += line.projected_amount;
+      if (line.projected_amount > 0) subTotals.plannedMonths += 1;
+      subcategoryTotals.set(subcategoryKey, subTotals);
     });
   });
 
   const categories = Array.from(categoryTotals, ([category, totals]) => ({
     category,
     avgSpent: totals.actual / monthsAnalyzed,
-    avgPlanned: totals.planned / monthsAnalyzed,
+    // Average the plan only over months it was actually budgeted, so months before a category had a plan don't drag the average toward zero.
+    avgPlanned: totals.plannedMonths > 0 ? totals.planned / totals.plannedMonths : 0,
   }));
 
-  const recommendations = categories
-    .filter(category => category.category !== SAVINGS_CATEGORY)
-    .flatMap<BudgetRecommendation>(category => {
-      const overage = category.avgSpent - category.avgPlanned;
-      const meaningfulDifference = Math.max(25, category.avgPlanned * 0.05);
+  // Recommendations operate per subcategory, matching the actual editable budget fields on the Budget screen —
+  // a category (e.g. Housing) combines several unrelated fields (mortgage, utilities, etc.) and suggesting a
+  // single combined number for it doesn't correspond to anything the user can actually set.
+  const subcategories = Array.from(subcategoryTotals.values(), totals => ({
+    category: totals.category,
+    subcategory: totals.subcategory,
+    avgSpent: totals.actual / monthsAnalyzed,
+    avgPlanned: totals.plannedMonths > 0 ? totals.planned / totals.plannedMonths : 0,
+  }));
+
+  const recommendations = subcategories
+    .filter(entry => entry.category !== SAVINGS_CATEGORY && entry.category !== TRAVEL_CATEGORY)
+    .flatMap<BudgetRecommendation>(entry => {
+      const overage = entry.avgSpent - entry.avgPlanned;
+      const meaningfulDifference = Math.max(25, entry.avgPlanned * 0.05);
       const capNote = (suggestedIncrease: number) => {
         if (capHeadroom === null) return '';
         return capHeadroom >= suggestedIncrease
@@ -259,33 +281,33 @@ function buildInsights(monthlyBudgets: MonthlyBudget[], transactions: Transactio
           : ` The ${formatCurrency(latestCappedMonth!.totalBudget!)} monthly cap only leaves about ${formatCurrency(Math.max(capHeadroom, 0))} of headroom, so raising this will likely need a cut elsewhere.`;
       };
 
-      if (category.avgSpent > 0 && category.avgPlanned === 0) {
-        const suggestedPlan = roundUp(category.avgSpent, 10);
+      if (entry.avgSpent > 0 && entry.avgPlanned === 0) {
+        const suggestedPlan = roundUp(entry.avgSpent, 10);
         return [{
-          ...category,
+          ...entry,
           suggestedPlan,
           detail: `This spending has no average budget. Give it a visible monthly allowance, then decide whether the amount feels intentional.${capNote(suggestedPlan)}`,
           direction: 'raise' as const,
-          priority: category.avgSpent,
+          priority: entry.avgSpent,
         }];
       }
 
       if (overage >= meaningfulDifference) {
-        const suggestedPlan = roundUp(category.avgSpent, 10);
+        const suggestedPlan = roundUp(entry.avgSpent, 10);
         return [{
-          ...category,
+          ...entry,
           suggestedPlan,
-          detail: `Spending averages ${formatCurrency(overage)} above plan. Raise the plan if that level is expected, or keep the current plan as a clear monthly cap.${capNote(suggestedPlan - category.avgPlanned)}`,
+          detail: `Spending averages ${formatCurrency(overage)} above plan. Raise the plan if that level is expected, or keep the current plan as a clear monthly cap.${capNote(suggestedPlan - entry.avgPlanned)}`,
           direction: 'raise' as const,
           priority: overage,
         }];
       }
 
-      const cushionedPlan = roundUp(category.avgSpent * 1.1, 10);
-      const releasable = category.avgPlanned - cushionedPlan;
-      if (category.avgSpent > 0 && releasable >= Math.max(25, category.avgPlanned * 0.1)) {
+      const cushionedPlan = roundUp(entry.avgSpent * 1.1, 10);
+      const releasable = entry.avgPlanned - cushionedPlan;
+      if (entry.avgSpent > 0 && releasable >= Math.max(25, entry.avgPlanned * 0.1)) {
         return [{
-          ...category,
+          ...entry,
           suggestedPlan: cushionedPlan,
           detail: `This target keeps roughly 10% above average spending and could release ${formatCurrency(releasable)} each month for another priority.`,
           direction: 'lower' as const,
@@ -307,7 +329,7 @@ function buildInsights(monthlyBudgets: MonthlyBudget[], transactions: Transactio
 
   let coachTitle = 'A few focused changes can make the plan more realistic.';
   let coachDetail = recommendations.length > 0
-    ? `Start with ${recommendations[0].category}; it has the clearest gap between average spending and the current plan.`
+    ? `Start with ${recommendations[0].subcategory}; it has the clearest gap between average spending and the current plan.`
     : 'Keep tracking for another month before making broad changes.';
   let coachTone: InsightModel['coachTone'] = 'attention';
 
@@ -394,6 +416,7 @@ function buildInsights(monthlyBudgets: MonthlyBudget[], transactions: Transactio
 
   const onTrackCategories = categories.filter(category =>
     category.category !== SAVINGS_CATEGORY &&
+    category.category !== TRAVEL_CATEGORY &&
     category.avgPlanned > 0 &&
     category.avgSpent > 0 &&
     category.avgSpent <= category.avgPlanned,
@@ -521,6 +544,7 @@ const styles = StyleSheet.create({
   recommendationHeading: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' },
   itemHeadingNarrow: { flexDirection: 'column', alignItems: 'flex-start', gap: 2 },
   recommendationTitle: { flex: 1, minWidth: 0, flexShrink: 1, maxWidth: '100%', color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' },
+  recommendationCategory: { color: BudgetColors.faint, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '700' },
   recommendationTarget: { fontFamily: Fonts.sans, fontSize: 10, fontWeight: '800' },
   textAttention: { color: BudgetColors.coral },
   textOpportunity: { color: BudgetColors.blue },

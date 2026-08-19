@@ -404,6 +404,35 @@ async function ensureFeatureSchema() {
         projected_amount NUMERIC(10, 2) NOT NULL DEFAULT 0,
         PRIMARY KEY (template_id, subcategory_id)
       )`);
+    await query(`
+      CREATE TABLE IF NOT EXISTS public.investment_accounts (
+        account_id BIGSERIAL PRIMARY KEY,
+        name VARCHAR(100) NOT NULL UNIQUE,
+        institution VARCHAR(100),
+        account_type VARCHAR(20) NOT NULL DEFAULT 'OTHER' CHECK (account_type IN ('TFSA', 'RRSP', 'OTHER')),
+        person_id INTEGER REFERENCES public.people(person_id) ON DELETE SET NULL,
+        display_order SMALLINT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`);
+    await query(`
+      CREATE TABLE IF NOT EXISTS public.investment_balances (
+        balance_id BIGSERIAL PRIMARY KEY,
+        account_id BIGINT NOT NULL REFERENCES public.investment_accounts(account_id) ON DELETE CASCADE,
+        as_of_date DATE NOT NULL,
+        balance NUMERIC(12, 2) NOT NULL CHECK (balance >= 0),
+        notes VARCHAR(255),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`);
+    await query(`
+      CREATE INDEX IF NOT EXISTS ix_investment_balances_account_date
+      ON public.investment_balances (account_id, as_of_date)`);
+    await query(`
+      INSERT INTO public.investment_accounts (name, institution, account_type, display_order)
+      VALUES
+        ('Wealthsimple TFSA', 'Wealthsimple', 'TFSA', 1),
+        ('Quadrus TFSA', 'Quadrus', 'TFSA', 2),
+        ('Quadrus RRSP', 'Quadrus', 'RRSP', 3)
+      ON CONFLICT (name) DO NOTHING`);
     return;
   }
 
@@ -590,6 +619,43 @@ async function ensureFeatureSchema() {
           REFERENCES dbo.subcategories(subcategory_id)
       );
     END`);
+  await query(`
+    IF OBJECT_ID(N'dbo.investment_accounts', N'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.investment_accounts (
+        account_id INT IDENTITY(1,1) PRIMARY KEY,
+        name NVARCHAR(100) NOT NULL UNIQUE,
+        institution NVARCHAR(100) NULL,
+        account_type NVARCHAR(20) NOT NULL DEFAULT 'OTHER',
+        person_id INT NULL,
+        display_order SMALLINT NULL,
+        CONSTRAINT FK_investment_accounts_people FOREIGN KEY (person_id)
+          REFERENCES dbo.people(person_id) ON DELETE SET NULL
+      );
+    END`);
+  await query(`
+    IF OBJECT_ID(N'dbo.investment_balances', N'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.investment_balances (
+        balance_id INT IDENTITY(1,1) PRIMARY KEY,
+        account_id INT NOT NULL,
+        as_of_date DATE NOT NULL,
+        balance DECIMAL(12,2) NOT NULL CHECK (balance >= 0),
+        notes NVARCHAR(255) NULL,
+        CONSTRAINT FK_investment_balances_accounts FOREIGN KEY (account_id)
+          REFERENCES dbo.investment_accounts(account_id) ON DELETE CASCADE
+      );
+    END`);
+  await query(`
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_investment_balances_account_date' AND object_id = OBJECT_ID(N'dbo.investment_balances'))
+      CREATE INDEX IX_investment_balances_account_date ON dbo.investment_balances(account_id, as_of_date)`);
+  await query(`
+    IF NOT EXISTS (SELECT 1 FROM dbo.investment_accounts WHERE name = N'Wealthsimple TFSA')
+      INSERT INTO dbo.investment_accounts (name, institution, account_type, display_order) VALUES (N'Wealthsimple TFSA', N'Wealthsimple', N'TFSA', 1);
+    IF NOT EXISTS (SELECT 1 FROM dbo.investment_accounts WHERE name = N'Quadrus TFSA')
+      INSERT INTO dbo.investment_accounts (name, institution, account_type, display_order) VALUES (N'Quadrus TFSA', N'Quadrus', N'TFSA', 2);
+    IF NOT EXISTS (SELECT 1 FROM dbo.investment_accounts WHERE name = N'Quadrus RRSP')
+      INSERT INTO dbo.investment_accounts (name, institution, account_type, display_order) VALUES (N'Quadrus RRSP', N'Quadrus', N'RRSP', 3);`);
 }
 
 app.get("/", (req, res) => {
@@ -2112,6 +2178,193 @@ app.delete("/budget-templates/:templateId", async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Failed to delete the budget template" });
+  }
+});
+
+const INVESTMENT_ACCOUNT_TYPES = ["TFSA", "RRSP", "OTHER"];
+
+app.get("/investment-accounts", async (req, res) => {
+  try {
+    const queryText = dbType === "postgres"
+      ? `SELECT ia.account_id, ia.name, ia.institution, ia.account_type, ia.person_id, p.name AS person_name,
+                lb.balance AS latest_balance, lb.as_of_date AS latest_as_of_date
+         FROM public.investment_accounts ia
+         LEFT JOIN public.people p ON p.person_id = ia.person_id
+         LEFT JOIN LATERAL (
+           SELECT balance, as_of_date
+           FROM public.investment_balances ib
+           WHERE ib.account_id = ia.account_id
+           ORDER BY ib.as_of_date DESC, ib.balance_id DESC
+           LIMIT 1
+         ) lb ON TRUE
+         ORDER BY ia.display_order NULLS LAST, ia.account_id`
+      : `SELECT ia.account_id, ia.name, ia.institution, ia.account_type, ia.person_id, p.name AS person_name,
+                lb.balance AS latest_balance, lb.as_of_date AS latest_as_of_date
+         FROM dbo.investment_accounts ia
+         LEFT JOIN dbo.people p ON p.person_id = ia.person_id
+         OUTER APPLY (
+           SELECT TOP 1 balance, as_of_date
+           FROM dbo.investment_balances ib
+           WHERE ib.account_id = ia.account_id
+           ORDER BY ib.as_of_date DESC, ib.balance_id DESC
+         ) lb
+         ORDER BY ia.display_order, ia.account_id`;
+
+    const rows = await query(queryText);
+    res.json(rows.map(row => ({
+      ...row,
+      latest_balance: row.latest_balance === null ? null : Number(row.latest_balance),
+    })));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to fetch investment accounts" });
+  }
+});
+
+app.post("/investment-accounts", async (req, res) => {
+  try {
+    const name = typeof req.body.name === "string" ? req.body.name.trim() : "";
+    const institution = typeof req.body.institution === "string" ? req.body.institution.trim() : null;
+    const accountType = INVESTMENT_ACCOUNT_TYPES.includes(req.body.account_type) ? req.body.account_type : "OTHER";
+    const personId = req.body.person_id ? Number(req.body.person_id) : null;
+
+    if (!name) {
+      return res.status(400).json({ error: "An account name is required" });
+    }
+    if (personId !== null && !Number.isInteger(personId)) {
+      return res.status(400).json({ error: "person_id must be a valid person" });
+    }
+
+    const queryText = dbType === "postgres"
+      ? `INSERT INTO public.investment_accounts (name, institution, account_type, person_id, display_order)
+         SELECT @name, @institution, @account_type, @person_id, COALESCE(MAX(display_order), 0) + 1
+         FROM public.investment_accounts
+         RETURNING account_id, name, institution, account_type, person_id`
+      : `INSERT INTO dbo.investment_accounts (name, institution, account_type, person_id, display_order)
+         OUTPUT INSERTED.account_id AS account_id, INSERTED.name AS name, INSERTED.institution AS institution,
+                INSERTED.account_type AS account_type, INSERTED.person_id AS person_id
+         SELECT @name, @institution, @account_type, @person_id, COALESCE(MAX(display_order), 0) + 1
+         FROM dbo.investment_accounts`;
+
+    const rows = await query(queryText, {
+      name,
+      institution: institution || null,
+      account_type: accountType,
+      person_id: personId,
+    });
+    res.status(201).json(rows[0]);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to add the investment account" });
+  }
+});
+
+app.delete("/investment-accounts/:accountId", async (req, res) => {
+  try {
+    const accountId = Number(req.params.accountId);
+    if (!Number.isInteger(accountId)) {
+      return res.status(400).json({ error: "A valid account ID is required" });
+    }
+
+    const queryText = dbType === "postgres"
+      ? `DELETE FROM public.investment_accounts WHERE account_id = @account_id RETURNING account_id`
+      : `DELETE FROM dbo.investment_accounts OUTPUT DELETED.account_id AS account_id WHERE account_id = @account_id`;
+    const rows = await query(queryText, { account_id: accountId });
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: "Investment account not found" });
+    }
+
+    res.json({ account_id: rows[0].account_id });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to delete the investment account" });
+  }
+});
+
+app.get("/investment-balances", async (req, res) => {
+  try {
+    const accountId = Number(req.query.account_id);
+    if (!Number.isInteger(accountId)) {
+      return res.status(400).json({ error: "account_id is required" });
+    }
+
+    const queryText = dbType === "postgres"
+      ? `SELECT balance_id, account_id, as_of_date, balance, notes
+         FROM public.investment_balances
+         WHERE account_id = @account_id
+         ORDER BY as_of_date DESC, balance_id DESC`
+      : `SELECT balance_id, account_id, as_of_date, balance, notes
+         FROM dbo.investment_balances
+         WHERE account_id = @account_id
+         ORDER BY as_of_date DESC, balance_id DESC`;
+
+    const rows = await query(queryText, { account_id: accountId });
+    res.json(rows.map(row => ({ ...row, balance: Number(row.balance) })));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to fetch investment balances" });
+  }
+});
+
+app.post("/investment-balances", async (req, res) => {
+  try {
+    const accountId = Number(req.body.account_id);
+    const asOfDate = req.body.as_of_date;
+    const balance = Number(req.body.balance);
+    const notes = typeof req.body.notes === "string" ? req.body.notes.trim() : null;
+
+    if (!Number.isInteger(accountId)) {
+      return res.status(400).json({ error: "A valid account_id is required" });
+    }
+    if (!isIsoDate(asOfDate)) {
+      return res.status(400).json({ error: "as_of_date must be a valid YYYY-MM-DD date" });
+    }
+    if (!Number.isFinite(balance) || balance < 0) {
+      return res.status(400).json({ error: "balance must be a non-negative number" });
+    }
+
+    const queryText = dbType === "postgres"
+      ? `INSERT INTO public.investment_balances (account_id, as_of_date, balance, notes)
+         VALUES (@account_id, @as_of_date, @balance, @notes)
+         RETURNING balance_id`
+      : `INSERT INTO dbo.investment_balances (account_id, as_of_date, balance, notes)
+         OUTPUT INSERTED.balance_id AS balance_id
+         VALUES (@account_id, @as_of_date, @balance, @notes)`;
+
+    const rows = await query(queryText, {
+      account_id: accountId,
+      as_of_date: asOfDate,
+      balance,
+      notes: notes || null,
+    });
+    res.status(201).json({ balance_id: rows[0].balance_id });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to add the balance update" });
+  }
+});
+
+app.delete("/investment-balances/:balanceId", async (req, res) => {
+  try {
+    const balanceId = Number(req.params.balanceId);
+    if (!Number.isInteger(balanceId)) {
+      return res.status(400).json({ error: "A valid balance ID is required" });
+    }
+
+    const queryText = dbType === "postgres"
+      ? `DELETE FROM public.investment_balances WHERE balance_id = @balance_id RETURNING balance_id`
+      : `DELETE FROM dbo.investment_balances OUTPUT DELETED.balance_id AS balance_id WHERE balance_id = @balance_id`;
+    const rows = await query(queryText, { balance_id: balanceId });
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: "Balance entry not found" });
+    }
+
+    res.json({ balance_id: rows[0].balance_id });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to delete the balance entry" });
   }
 });
 
