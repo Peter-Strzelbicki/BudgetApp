@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle, Line, Path } from 'react-native-svg';
 
@@ -27,6 +28,8 @@ export function InvestmentTrendChart({ points, series, selectedKey, onSelect }: 
   selectedKey: string;
   onSelect: (key: string) => void;
 }) {
+  const [hoveredPoint, setHoveredPoint] = useState<{ label: string; color: string; date: string; value: number } | null>(null);
+
   if (points.length === 0) {
     return <View style={styles.placeholder}><Text style={styles.placeholderText}>Add a balance update for an account to see it here.</Text></View>;
   }
@@ -61,13 +64,32 @@ export function InvestmentTrendChart({ points, series, selectedKey, onSelect }: 
     <View style={styles.chartWrap}>
       <Text style={[styles.axisValue, styles.axisValueTop]}>{formatCurrency(maxValue)}</Text>
       <Text style={[styles.axisValue, styles.axisValueBottom]}>$0</Text>
+      {hoveredPoint && <View pointerEvents="none" style={styles.tooltip}>
+        <Text style={[styles.tooltipLabel, { color: hoveredPoint.color }]}>{hoveredPoint.label}</Text>
+        <Text style={styles.tooltipValue}>{formatCurrency(hoveredPoint.value)}</Text>
+        <Text style={styles.tooltipDate}>{formatDate(hoveredPoint.date)}</Text>
+      </View>}
       <Svg width="100%" height={CHART_HEIGHT} viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}>
         {[0, 0.25, 0.5, 0.75, 1].map(fraction => {
           const y = PADDING_TOP + plotHeight * fraction;
           return <Line key={fraction} x1={PADDING_X} y1={y} x2={CHART_WIDTH - PADDING_X} y2={y} stroke={BudgetColors.line} strokeWidth={1} />;
         })}
         {coordsBySeries.map(({ series: item, coords }) => <Path key={`${item.key}-line`} d={buildSmoothPath(coords)} fill="none" stroke={item.color} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />)}
-        {coordsBySeries.map(({ series: item, coords }) => coords.map((coord, index) => <Circle key={`${item.key}-${points[index].date}`} cx={coord.x} cy={coord.y} r={3.5} fill={BudgetColors.surface} stroke={item.color} strokeWidth={2} />))}
+        {coordsBySeries.map(({ series: item, coords }) => coords.map((coord, index) => <Circle
+          key={`${item.key}-${points[index].date}`}
+          cx={coord.x}
+          cy={coord.y}
+          r={4}
+          fill={BudgetColors.surface}
+          stroke={item.color}
+          strokeWidth={2}
+          onPressIn={() => setHoveredPoint({ label: item.label, color: item.color, date: points[index].date, value: points[index].values[item.key] ?? 0 })}
+          onPressOut={() => setHoveredPoint(null)}
+          {...({
+            onMouseEnter: () => setHoveredPoint({ label: item.label, color: item.color, date: points[index].date, value: points[index].values[item.key] ?? 0 }),
+            onMouseLeave: () => setHoveredPoint(null),
+          } as any)}
+        />))}
       </Svg>
     </View>
     <View style={styles.axisRow}>
@@ -107,6 +129,10 @@ const styles = StyleSheet.create({
   legendText: { color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 11, fontWeight: '700' },
   legendValue: { fontFamily: Fonts.sans, fontSize: 12, fontWeight: '800' },
   chartWrap: { position: 'relative' },
+  tooltip: { position: 'absolute', zIndex: 2, top: 10, left: 12, minWidth: 142, padding: 9, borderRadius: 7, backgroundColor: BudgetColors.surface, borderWidth: 1, borderColor: BudgetColors.line, shadowColor: BudgetColors.ink, shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 3 },
+  tooltipLabel: { fontFamily: Fonts.sans, fontSize: 10, fontWeight: '800' },
+  tooltipValue: { marginTop: 2, color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 15, fontWeight: '900' },
+  tooltipDate: { marginTop: 2, color: BudgetColors.muted, fontFamily: Fonts.sans, fontSize: 10 },
   axisValue: { position: 'absolute', right: 2, color: BudgetColors.faint, fontFamily: Fonts.sans, fontSize: 10, fontWeight: '700' },
   axisValueTop: { top: 4 },
   axisValueBottom: { bottom: 2 },
