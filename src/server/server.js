@@ -409,11 +409,17 @@ async function ensureFeatureSchema() {
         account_id BIGSERIAL PRIMARY KEY,
         name VARCHAR(100) NOT NULL UNIQUE,
         institution VARCHAR(100),
-        account_type VARCHAR(20) NOT NULL DEFAULT 'OTHER' CHECK (account_type IN ('TFSA', 'RRSP', 'OTHER')),
+        account_type VARCHAR(20) NOT NULL DEFAULT 'OTHER' CHECK (account_type IN ('TFSA', 'RRSP', 'DCPP', 'OTHER')),
         person_id INTEGER REFERENCES public.people(person_id) ON DELETE SET NULL,
         display_order SMALLINT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`);
+    await query(`
+      ALTER TABLE public.investment_accounts
+      DROP CONSTRAINT IF EXISTS investment_accounts_account_type_check`);
+    await query(`
+      ALTER TABLE public.investment_accounts
+      ADD CONSTRAINT investment_accounts_account_type_check CHECK (account_type IN ('TFSA', 'RRSP', 'DCPP', 'OTHER'))`);
     await query(`
       CREATE TABLE IF NOT EXISTS public.investment_balances (
         balance_id BIGSERIAL PRIMARY KEY,
@@ -2181,7 +2187,7 @@ app.delete("/budget-templates/:templateId", async (req, res) => {
   }
 });
 
-const INVESTMENT_ACCOUNT_TYPES = ["TFSA", "RRSP", "OTHER"];
+const INVESTMENT_ACCOUNT_TYPES = ["TFSA", "RRSP", "DCPP", "OTHER"];
 
 app.get("/investment-accounts", async (req, res) => {
   try {
@@ -2256,6 +2262,53 @@ app.post("/investment-accounts", async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Failed to add the investment account" });
+  }
+});
+
+app.put("/investment-accounts/:accountId", async (req, res) => {
+  try {
+    const accountId = Number(req.params.accountId);
+    if (!Number.isInteger(accountId)) {
+      return res.status(400).json({ error: "A valid account ID is required" });
+    }
+
+    const name = typeof req.body.name === "string" ? req.body.name.trim() : "";
+    const institution = typeof req.body.institution === "string" ? req.body.institution.trim() : "";
+    const accountType = INVESTMENT_ACCOUNT_TYPES.includes(req.body.account_type) ? req.body.account_type : null;
+
+    if (!name) {
+      return res.status(400).json({ error: "An account name is required" });
+    }
+    if (!accountType) {
+      return res.status(400).json({ error: "A valid account_type is required" });
+    }
+
+    const queryText = dbType === "postgres"
+      ? `UPDATE public.investment_accounts
+         SET name = @name, institution = @institution, account_type = @account_type
+         WHERE account_id = @account_id
+         RETURNING account_id, name, institution, account_type, person_id`
+      : `UPDATE dbo.investment_accounts
+         SET name = @name, institution = @institution, account_type = @account_type
+         OUTPUT INSERTED.account_id AS account_id, INSERTED.name AS name, INSERTED.institution AS institution,
+                INSERTED.account_type AS account_type, INSERTED.person_id AS person_id
+         WHERE account_id = @account_id`;
+
+    const rows = await query(queryText, {
+      account_id: accountId,
+      name,
+      institution: institution || null,
+      account_type: accountType,
+    });
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: "Investment account not found" });
+    }
+
+    res.json(rows[0]);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to update the investment account" });
   }
 });
 

@@ -1,9 +1,10 @@
-import { CalendarDays, ChevronDown, ChevronUp, Landmark, Plus, Save, Trash2, X } from 'lucide-react-native';
-import { useEffect, useState } from 'react';
+import { CalendarDays, ChevronDown, ChevronUp, Landmark, Pencil, Plus, Save, Trash2, X } from 'lucide-react-native';
+import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { EmptyState, ErrorNotice, formatCurrency, Panel, SectionHeader, useConfirm } from '@/components/budget-ui';
 import { DateInput } from '@/components/date-input';
+import { InvestmentTrendChart, InvestmentTrendPoint, InvestmentTrendSeries } from '@/components/investment-trend-chart';
 import {
     addInvestmentAccount,
     addInvestmentBalance,
@@ -13,12 +14,14 @@ import {
     getInvestmentBalances,
     InvestmentAccount,
     InvestmentBalance,
+    updateInvestmentAccount,
 } from '@/constants/api';
 import { BudgetColors, Fonts } from '@/constants/theme';
 
 const ACCOUNT_TYPES: { key: InvestmentAccount['account_type']; label: string }[] = [
   { key: 'TFSA', label: 'TFSA' },
   { key: 'RRSP', label: 'RRSP' },
+  { key: 'DCPP', label: 'DCPP' },
   { key: 'OTHER', label: 'Other' },
 ];
 
@@ -37,16 +40,27 @@ export function InvestmentAccountsPanel() {
 
   const [expandedAccountId, setExpandedAccountId] = useState<number | null>(null);
   const [historyByAccount, setHistoryByAccount] = useState<Record<number, InvestmentBalance[]>>({});
-  const [historyLoadingId, setHistoryLoadingId] = useState<number | null>(null);
   const [updatingAccountId, setUpdatingAccountId] = useState<number | null>(null);
   const [balanceDate, setBalanceDate] = useState(todayIso());
   const [balanceAmount, setBalanceAmount] = useState('');
   const [savingBalance, setSavingBalance] = useState(false);
   const [deletingBalanceId, setDeletingBalanceId] = useState<number | null>(null);
 
+  const [editingAccountId, setEditingAccountId] = useState<number | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editInstitution, setEditInstitution] = useState('');
+  const [editType, setEditType] = useState<InvestmentAccount['account_type']>('TFSA');
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [selectedTrendKey, setSelectedTrendKey] = useState('both');
+
   const load = async () => {
     setLoading(true); setError(null);
-    try { setAccounts(await getInvestmentAccounts()); }
+    try {
+      const rows = await getInvestmentAccounts();
+      setAccounts(rows);
+      const histories = await Promise.all(rows.map(account => getInvestmentBalances(account.account_id)));
+      setHistoryByAccount(Object.fromEntries(rows.map((account, index) => [account.account_id, histories[index]])));
+    }
     catch (loadError) { setError(loadError instanceof Error ? loadError.message : 'Investment accounts could not be loaded.'); }
     finally { setLoading(false); }
   };
@@ -82,24 +96,34 @@ export function InvestmentAccountsPanel() {
     } finally { setDeletingAccountId(null); }
   };
 
-  const toggleHistory = async (accountId: number) => {
-    if (expandedAccountId === accountId) { setExpandedAccountId(null); return; }
-    setExpandedAccountId(accountId);
-    if (!historyByAccount[accountId]) {
-      setHistoryLoadingId(accountId);
-      try {
-        const rows = await getInvestmentBalances(accountId);
-        setHistoryByAccount(current => ({ ...current, [accountId]: rows }));
-      } catch (historyError) {
-        setError(historyError instanceof Error ? historyError.message : 'Balance history could not be loaded.');
-      } finally { setHistoryLoadingId(null); }
-    }
+  const toggleHistory = (accountId: number) => {
+    setExpandedAccountId(current => current === accountId ? null : accountId);
   };
 
   const openUpdate = (accountId: number) => {
     setUpdatingAccountId(current => current === accountId ? null : accountId);
     setBalanceDate(todayIso());
     setBalanceAmount('');
+  };
+
+  const openEdit = (account: InvestmentAccount) => {
+    setEditingAccountId(current => current === account.account_id ? null : account.account_id);
+    setEditName(account.name);
+    setEditInstitution(account.institution ?? '');
+    setEditType(account.account_type);
+  };
+
+  const saveEdit = async (accountId: number) => {
+    const trimmedName = editName.trim();
+    if (!trimmedName) { setError('An account name is required.'); return; }
+    setSavingEdit(true); setError(null);
+    try {
+      const updated = await updateInvestmentAccount(accountId, { name: trimmedName, institution: editInstitution.trim() || undefined, account_type: editType });
+      setAccounts(current => current.map(item => item.account_id === accountId ? { ...item, ...updated } : item));
+      setEditingAccountId(null);
+    } catch (editError) {
+      setError(editError instanceof Error ? editError.message : 'The account could not be updated.');
+    } finally { setSavingEdit(false); }
   };
 
   const saveBalance = async (accountId: number) => {
@@ -139,14 +163,17 @@ export function InvestmentAccountsPanel() {
   };
 
   const total = accounts.reduce((sum, account) => sum + (account.latest_balance ?? 0), 0);
+  const trendPoints = useMemo(() => buildTrendPoints(accounts, historyByAccount), [accounts, historyByAccount]);
+  const trendSeries = useMemo(() => buildTrendSeries(accounts), [accounts]);
 
   return (
     <Panel>
       <SectionHeader
         title="Investment accounts"
-        detail={`${formatCurrency(total)} across ${accounts.length} account${accounts.length === 1 ? '' : 's'} \u00b7 TFSA/RRSP balances you update manually`}
+        detail={`${formatCurrency(total)} across ${accounts.length} account${accounts.length === 1 ? '' : 's'} \u00b7 TFSA/RRSP/DCPP balances you update manually`}
       />
       {error && <ErrorNotice message={error} onRetry={load} />}
+      {!loading && accounts.length > 0 && <InvestmentTrendChart points={trendPoints} series={trendSeries} selectedKey={selectedTrendKey} onSelect={setSelectedTrendKey} />}
       <View style={styles.composer}>
         <TextInput value={name} onChangeText={setName} placeholder="Account name, e.g. Wealthsimple TFSA" placeholderTextColor={BudgetColors.faint} style={styles.nameInput} />
         <TextInput value={institution} onChangeText={setInstitution} placeholder="Institution (optional)" placeholderTextColor={BudgetColors.faint} style={styles.institutionInput} />
@@ -179,6 +206,9 @@ export function InvestmentAccountsPanel() {
             <Pressable accessibilityLabel={`Update ${account.name} balance`} onPress={() => openUpdate(account.account_id)} style={({ pressed }) => [styles.iconButton, updatingAccountId === account.account_id && styles.iconButtonActive, pressed && styles.pressed]}>
               <Plus color={updatingAccountId === account.account_id ? BudgetColors.green : BudgetColors.ink} size={16} />
             </Pressable>
+            <Pressable accessibilityLabel={`Edit ${account.name}`} onPress={() => openEdit(account)} style={({ pressed }) => [styles.iconButton, editingAccountId === account.account_id && styles.iconButtonActive, pressed && styles.pressed]}>
+              <Pencil color={editingAccountId === account.account_id ? BudgetColors.green : BudgetColors.ink} size={16} />
+            </Pressable>
             <Pressable accessibilityLabel={`${expandedAccountId === account.account_id ? 'Hide' : 'Show'} ${account.name} history`} onPress={() => toggleHistory(account.account_id)} style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}>
               {expandedAccountId === account.account_id ? <ChevronUp color={BudgetColors.ink} size={16} /> : <ChevronDown color={BudgetColors.ink} size={16} />}
             </Pressable>
@@ -186,6 +216,25 @@ export function InvestmentAccountsPanel() {
               {deletingAccountId === account.account_id ? <ActivityIndicator color={BudgetColors.coral} size="small" /> : <Trash2 color={BudgetColors.coral} size={16} />}
             </Pressable>
           </View>
+          {editingAccountId === account.account_id && (
+            <View style={styles.editRow}>
+              <TextInput value={editName} onChangeText={setEditName} placeholder="Account name" placeholderTextColor={BudgetColors.faint} style={styles.editNameInput} />
+              <TextInput value={editInstitution} onChangeText={setEditInstitution} placeholder="Institution (optional)" placeholderTextColor={BudgetColors.faint} style={styles.editInstitutionInput} />
+              <View style={styles.typeChoices}>
+                {ACCOUNT_TYPES.map(type => (
+                  <Pressable key={type.key} onPress={() => setEditType(type.key)} style={({ pressed }) => [styles.typeChoice, editType === type.key && styles.typeChoiceSelected, pressed && styles.pressed]}>
+                    <Text style={[styles.typeChoiceText, editType === type.key && styles.typeChoiceTextSelected]}>{type.label}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <Pressable disabled={savingEdit || !editName.trim()} onPress={() => saveEdit(account.account_id)} style={({ pressed }) => [styles.saveButton, (!editName.trim() || savingEdit) && styles.disabled, pressed && styles.pressed]}>
+                {savingEdit ? <ActivityIndicator color={BudgetColors.surface} size="small" /> : <Save color={BudgetColors.surface} size={15} />}
+              </Pressable>
+              <Pressable onPress={() => setEditingAccountId(null)} style={({ pressed }) => [styles.cancelButton, pressed && styles.pressed]}>
+                <X color={BudgetColors.muted} size={16} />
+              </Pressable>
+            </View>
+          )}
           {updatingAccountId === account.account_id && (
             <View style={styles.updateRow}>
               <View style={styles.updateDate}><DateInput value={balanceDate} onChange={setBalanceDate} /></View>
@@ -203,9 +252,7 @@ export function InvestmentAccountsPanel() {
           )}
           {expandedAccountId === account.account_id && (
             <View style={styles.history}>
-              {historyLoadingId === account.account_id ? (
-                <ActivityIndicator color={BudgetColors.green} size="small" />
-              ) : (historyByAccount[account.account_id]?.length ?? 0) === 0 ? (
+              {(historyByAccount[account.account_id]?.length ?? 0) === 0 ? (
                 <Text style={styles.historyEmpty}>No balance entries recorded yet.</Text>
               ) : historyByAccount[account.account_id].map(entry => (
                 <View key={entry.balance_id} style={styles.historyRow}>
@@ -239,6 +286,53 @@ function formatDate(value: string) {
   return new Date(`${value.slice(0, 10)}T12:00:00`).toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+function buildTrendSeries(accounts: InvestmentAccount[]): InvestmentTrendSeries[] {
+  const accountColors = [BudgetColors.gold, BudgetColors.coral, BudgetColors.green, BudgetColors.blue];
+  return [
+    { key: 'tfsa', label: 'TFSA total', color: BudgetColors.green },
+    { key: 'rrsp', label: 'RRSP/DCPP total', color: BudgetColors.blue },
+    ...accounts.map((account, index) => ({
+      key: `account-${account.account_id}`,
+      label: account.name,
+      color: accountColors[index % accountColors.length],
+    })),
+  ];
+}
+
+/** Forward-fills each account's latest known balance onto every date any account was updated. */
+function buildTrendPoints(accounts: InvestmentAccount[], historyByAccount: Record<number, InvestmentBalance[]>): InvestmentTrendPoint[] {
+  const sortedByAccount = new Map<number, InvestmentBalance[]>();
+  const dateSet = new Set<string>();
+  accounts.forEach(account => {
+    const entries = [...(historyByAccount[account.account_id] ?? [])]
+      .map(entry => ({ ...entry, as_of_date: entry.as_of_date.slice(0, 10) }))
+      .sort((a, b) => a.as_of_date.localeCompare(b.as_of_date));
+    sortedByAccount.set(account.account_id, entries);
+    entries.forEach(entry => dateSet.add(entry.as_of_date));
+  });
+
+  const dates = Array.from(dateSet).sort();
+
+  return dates.map(date => {
+    let tfsa = 0;
+    let rrsp = 0;
+    const values: Record<string, number> = {};
+    accounts.forEach(account => {
+      const entries = sortedByAccount.get(account.account_id) ?? [];
+      let latest: number | null = null;
+      for (const entry of entries) {
+        if (entry.as_of_date > date) break;
+        latest = entry.balance;
+      }
+      if (latest === null) return;
+      values[`account-${account.account_id}`] = latest;
+      if (account.account_type === 'TFSA') tfsa += latest;
+      else if (account.account_type === 'RRSP' || account.account_type === 'DCPP') rrsp += latest;
+    });
+    return { date, values: { ...values, tfsa, rrsp } };
+  });
+}
+
 const styles = StyleSheet.create({
   loader: { minHeight: 100, alignItems: 'center', justifyContent: 'center' },
   composer: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10, marginBottom: 6 },
@@ -264,6 +358,9 @@ const styles = StyleSheet.create({
   iconButtonActive: { borderColor: BudgetColors.green, backgroundColor: BudgetColors.greenSoft },
   updateRow: { marginTop: 10, marginLeft: 42, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
   updateDate: { minWidth: 160 },
+  editRow: { marginTop: 10, marginLeft: 42, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
+  editNameInput: { minWidth: 180, flex: 1, height: 40, borderRadius: 7, borderWidth: 1, borderColor: BudgetColors.line, backgroundColor: BudgetColors.canvas, paddingHorizontal: 11, color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 12 },
+  editInstitutionInput: { minWidth: 140, flex: 1, height: 40, borderRadius: 7, borderWidth: 1, borderColor: BudgetColors.line, backgroundColor: BudgetColors.canvas, paddingHorizontal: 11, color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 12 },
   amountInput: { minWidth: 130, height: 42, borderRadius: 7, borderWidth: 1, borderColor: BudgetColors.line, backgroundColor: BudgetColors.canvas, flexDirection: 'row', alignItems: 'center' },
   dollar: { color: BudgetColors.muted, paddingLeft: 11, fontFamily: Fonts.sans, fontSize: 13 },
   amountInputField: { flex: 1, minWidth: 0, height: 40, paddingHorizontal: 7, color: BudgetColors.ink, fontFamily: Fonts.sans, fontSize: 13, fontWeight: '700' },

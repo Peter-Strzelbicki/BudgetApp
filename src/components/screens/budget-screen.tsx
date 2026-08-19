@@ -9,7 +9,6 @@ import { EmptyState, ErrorNotice, formatCurrency, MonthSwitcher, moveMonth, Page
 import { ContributionPanel } from '@/components/contribution-panel';
 import { BudgetLine, BudgetTemplate, Category, ContributionSummary, createSubcategory, deleteBudgetTemplate, deleteSubcategory, getBudgetLines, getBudgetTemplate, getBudgetTemplates, getBudgetTotal, getCategories, getContributionSummary, saveBudgetLine, saveBudgetTemplate, saveBudgetTotal } from '@/constants/api';
 import { BudgetColors, Fonts } from '@/constants/theme';
-import { TRACKING_START_MONTH, TRACKING_START_YEAR } from '@/constants/tracking-period';
 
 export default function BudgetScreen() {
   const now = new Date();
@@ -77,11 +76,6 @@ export default function BudgetScreen() {
 
   const changeMonth = (offset: number) => {
     const next = moveMonth(month, year, offset);
-    const now = new Date();
-    const maxAllowed = moveMonth(now.getMonth() + 1, now.getFullYear(), 1);
-    const afterAllowedMonth = next.year > maxAllowed.year || (next.year === maxAllowed.year && next.month > maxAllowed.month);
-    const beforeTrackingStart = next.year < TRACKING_START_YEAR || (next.year === TRACKING_START_YEAR && next.month < TRACKING_START_MONTH);
-    if (afterAllowedMonth || beforeTrackingStart) return;
     setMonth(next.month);
     setYear(next.year);
   };
@@ -266,6 +260,7 @@ export default function BudgetScreen() {
     return result;
   }, {});
   const isUpcomingMonth = year > now.getFullYear() || (year === now.getFullYear() && month > now.getMonth() + 1);
+  const capOverage = totalBudget === null ? 0 : Math.round((planned - totalBudget) * 100) / 100;
 
   return (
     <Page>
@@ -286,11 +281,11 @@ export default function BudgetScreen() {
           </Text>
         </View>
       )}
-      {totalBudget !== null && planned > totalBudget && (
+      {totalBudget !== null && capOverage > 0 && (
         <View style={styles.capWarning}>
           <AlertTriangle color={BudgetColors.warningInk} size={17} />
           <Text style={styles.capWarningText}>
-            Planned budget is {formatCurrency(planned - totalBudget)} over the {formatCurrency(totalBudget)} monthly cap.
+            Planned budget is {formatCurrency(capOverage)} over the {formatCurrency(totalBudget)} monthly cap.
           </Text>
         </View>
       )}

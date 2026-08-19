@@ -796,7 +796,7 @@ export interface InvestmentAccount {
   account_id: number;
   name: string;
   institution: string | null;
-  account_type: 'TFSA' | 'RRSP' | 'OTHER';
+  account_type: 'TFSA' | 'RRSP' | 'DCPP' | 'OTHER';
   person_id: number | null;
   person_name: string | null;
   latest_balance: number | null;
@@ -815,7 +815,7 @@ export function getInvestmentAccounts() {
   return requestJson<InvestmentAccount[]>('/investment-accounts');
 }
 
-export function addInvestmentAccount(account: { name: string; institution?: string; account_type: 'TFSA' | 'RRSP' | 'OTHER'; person_id?: number | null }) {
+export function addInvestmentAccount(account: { name: string; institution?: string; account_type: 'TFSA' | 'RRSP' | 'DCPP' | 'OTHER'; person_id?: number | null }) {
   return requestJson<{ account_id: number }>('/investment-accounts', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -825,6 +825,14 @@ export function addInvestmentAccount(account: { name: string; institution?: stri
 
 export function deleteInvestmentAccount(accountId: number) {
   return requestJson<{ account_id: number }>(`/investment-accounts/${accountId}`, { method: 'DELETE' }, 1);
+}
+
+export function updateInvestmentAccount(accountId: number, account: { name: string; institution?: string; account_type: 'TFSA' | 'RRSP' | 'DCPP' | 'OTHER' }) {
+  return requestJson<InvestmentAccount>(`/investment-accounts/${accountId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(account),
+  }, 1);
 }
 
 export async function getInvestmentBalances(accountId: number): Promise<InvestmentBalance[]> {
