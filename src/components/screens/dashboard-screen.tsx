@@ -1,10 +1,10 @@
 import { router } from 'expo-router';
 import { ArrowRight, ChevronRight, Landmark } from 'lucide-react-native';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Image, Pressable, RefreshControl, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Image, Platform, Pressable, RefreshControl, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import { AnimatedHorizontalBar, AnimatedVerticalBar } from '@/components/animated-bar';
-import { EmptyState, ErrorNotice, formatCurrency, Page, PageHeading, Panel, SectionHeader, StatCard, StickyControlRow, YearSwitcher } from '@/components/budget-ui';
+import { EmptyState, ErrorNotice, formatCurrency, Page, PageHeading, Panel, SectionHeader, StatCard, StickyControlRow, useConfirm, YearSwitcher } from '@/components/budget-ui';
 import { ContributionPanel } from '@/components/contribution-panel';
 import { BudgetLine, CategorySummary, ContributionSummary, getBudgetLines, getCategorySummary, getContributionSummary, getIncomeSummary, getMonthlySummary, getTransactions, getYtdSummary, IncomeMonthSummary, MonthlySummary, Transaction, YtdSummary } from '@/constants/api';
 import { BudgetColors, Fonts } from '@/constants/theme';
@@ -49,6 +49,7 @@ export default function DashboardScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const monthRequest = useRef(0);
+  const confirm = useConfirm();
 
   const trackedMonthsForYear = getTrackedMonthsForYear(year, now);
   const lastTrackedMonth = trackedMonthsForYear[trackedMonthsForYear.length - 1] ?? currentMonth;
@@ -109,6 +110,22 @@ export default function DashboardScreen() {
   };
 
   useEffect(() => { load(false, currentYear, currentMonth); }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const reminderKey = 'homebudget-savings-reminder-shown';
+    const currentYearMonth = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
+    if (window.localStorage.getItem(reminderKey) === currentYearMonth) return;
+    confirm({
+      title: 'Update your savings balances',
+      message: 'A new month has started \u2014 head to the Savings tab and update your investment account balances so the trend chart stays accurate.',
+      confirmLabel: 'Go to Savings',
+      cancelLabel: 'Not now',
+    }).then(goToSavings => {
+      window.localStorage.setItem(reminderKey, currentYearMonth);
+      if (goToSavings) router.push('/savings' as any);
+    });
+  }, []);
 
   const selectMonth = async (month: number) => {
     const validMonths = getTrackedMonthsForYear(year, now);
