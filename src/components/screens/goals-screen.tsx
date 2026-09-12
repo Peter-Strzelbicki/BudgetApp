@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { AnimatedIconButton, EmptyState, ErrorNotice, Page, PageHeading, Panel, SectionHeader } from '@/components/budget-ui';
+import { playSuccessSound } from '@/components/success-sound';
 import { addGoal, deleteGoal, getGoals, Goal, setGoalCompleted } from '@/constants/api';
 import { BudgetColors, Fonts } from '@/constants/theme';
 
@@ -44,6 +45,7 @@ export default function GoalsScreen() {
     setError(null);
     const nextCompleted = !goal.completed;
     setGoals(current => current.map(item => item.goal_id === goal.goal_id ? { ...item, completed: nextCompleted } : item));
+    if (nextCompleted) playSuccessSound();
     try { await setGoalCompleted(goal.goal_id, nextCompleted); }
     catch (toggleError) {
       setGoals(current => current.map(item => item.goal_id === goal.goal_id ? { ...item, completed: goal.completed } : item));

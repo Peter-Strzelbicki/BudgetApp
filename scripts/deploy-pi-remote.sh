@@ -43,6 +43,12 @@ sudo install -m 644 "$APP_ROOT/src/server/$BACKUP_TIMER" "/etc/systemd/system/$B
 sudo install -m 644 "$APP_ROOT/src/server/$HEALTH_CHECK_SERVICE" "/etc/systemd/system/$HEALTH_CHECK_SERVICE"
 sudo install -m 644 "$APP_ROOT/src/server/$HEALTH_CHECK_TIMER" "/etc/systemd/system/$HEALTH_CHECK_TIMER"
 sudo install -m 644 "$NGINX_CONFIG" /etc/nginx/sites-available/homebudget
+
+# Cap journal disk usage and let nginx/dnsmasq self-heal like the app services already do.
+sudo install -D -m 644 "$APP_ROOT/src/server/journald-homebudget.conf" /etc/systemd/journald.conf.d/homebudget.conf
+sudo install -D -m 644 "$APP_ROOT/src/server/service-restart-override.conf" /etc/systemd/system/nginx.service.d/override.conf
+sudo install -D -m 644 "$APP_ROOT/src/server/service-restart-override.conf" /etc/systemd/system/dnsmasq.service.d/override.conf
+sudo systemctl restart systemd-journald
 sudo ln -sf /etc/nginx/sites-available/homebudget /etc/nginx/sites-enabled/homebudget
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t

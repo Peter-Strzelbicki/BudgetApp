@@ -38,13 +38,19 @@ The Settings screen reads the latest successful backup from the API and can trig
 
 `health-check.service` and `health-check.timer` run `scripts/health-check.sh` once an hour (installed/enabled by the deployment script, same as the backup timer).
 
-The check verifies, in order: `budget-api.service`, `expo-app.service`, `nginx`, `wg-quick@wg0`, `dnsmasq`, and `postgresql` are active; the API (`/test-db`) and web app respond locally; the Pi's current public IP matches what `sphomebudget.duckdns.org` resolves to (this is what silently broke the VPN in September 2026 — see repo memory); and root disk usage is below 90%.
+The check verifies, in order: `budget-api.service`, `expo-app.service`, `nginx`, `wg-quick@wg0`, `dnsmasq`, and `postgresql` are active; the API (`/test-db`) and web app respond locally; the Pi's current public IP matches what `sphomebudget.duckdns.org` resolves to (this is what silently broke the VPN in September 2026 — see repo memory); root disk usage is below 90%; and the last successful database backup (`~/.local/share/homebudget/backup-status.json`) is less than 40 days old.
 
 Results are appended to `/home/pstrzelbicki/health-check.log` (one line per run, `OK` or `WARN` with details), auto-trimmed to the last 2000 lines. There is no push/email alerting — check the log over SSH:
 
 ```bash
 tail -n 50 /home/pstrzelbicki/health-check.log
 ```
+
+## Other stability hardening
+
+- `src/server/journald-homebudget.conf` caps the systemd journal at 300M / 90 days (`/etc/systemd/journald.conf.d/homebudget.conf`) so logs can't quietly fill the SD card.
+- `src/server/service-restart-override.conf` is installed as a drop-in for both `nginx` and `dnsmasq` (`Restart=on-failure`, matching `budget-api.service`/`expo-app.service`, which already had it) so they self-heal from a crash instead of staying down until someone notices.
+- `wg-quick@wg0` is a one-shot "bring the interface up" unit with no persistent process to restart — connectivity regressions there (like the DuckDNS staleness incident) are caught by the hourly health check instead of a restart policy.
 
 ## Notes for `api.ts`
 The web client now defaults to the current host for non-Android platforms, so when you open `http://192.168.2.107:8081` it will request `http://192.168.2.107:3000`.

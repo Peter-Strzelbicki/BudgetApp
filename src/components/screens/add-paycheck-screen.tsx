@@ -5,6 +5,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, useWindowDim
 import { AnimatedHorizontalBar } from '@/components/animated-bar';
 import { EmptyState, ErrorNotice, formatCurrency, MonthSwitcher, moveMonth, Page, PageHeading, Panel, SectionHeader, StickyControlRow } from '@/components/budget-ui';
 import { DateInput } from '@/components/date-input';
+import { playSuccessSound } from '@/components/success-sound';
 import { addExtraIncome, addJointPayment, ContributionSummary, deleteExtraIncome, deleteJointPayment, ExtraIncome, getContributionSummary, getExtraIncome, getIncomeConfig, getIncomeSummary, getJointPayments, IncomeConfig, IncomeMonthSummary, JointPayment, saveIncomeConfig } from '@/constants/api';
 import { BudgetColors, Fonts } from '@/constants/theme';
 import { TRACKING_START_MONTH, TRACKING_START_YEAR } from '@/constants/tracking-period';
@@ -128,6 +129,7 @@ export default function AddPaycheckScreen() {
       setPayments(paymentRows);
       setContribution(contributionSummary);
       setPaymentAmount('');
+      playSuccessSound();
     } catch (paymentError) {
       setError(paymentError instanceof Error ? paymentError.message : 'Could not add the joint payment.');
     } finally {
@@ -175,6 +177,7 @@ export default function AddPaycheckScreen() {
       setIncomeSummary(summaryRows);
       setExtraAmount('');
       setExtraDesc('');
+      playSuccessSound();
     } catch (addError) {
       setError(addError instanceof Error ? addError.message : 'Could not add extra income.');
     } finally {

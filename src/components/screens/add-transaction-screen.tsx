@@ -7,6 +7,7 @@ import Animated, { Easing, FadeInDown, FadeOutUp, ReduceMotion, ZoomIn } from 'r
 import { AnimatedHorizontalBar } from '@/components/animated-bar';
 import { ErrorNotice, formatCurrency, Page, PageHeading, Panel, SectionHeader } from '@/components/budget-ui';
 import { DateInput } from '@/components/date-input';
+import { playSuccessSound } from '@/components/success-sound';
 import { TimeInput } from '@/components/time-input';
 import { addTransaction, BudgetLine, Category, getBudgetLines, getCategories, getPeople, getRecurringTransactions, getSubcategories, getTransaction, getTransactions, Person, RecurringTransaction, Subcategory, Transaction, updateTransaction } from '@/constants/api';
 import { BudgetColors, Fonts } from '@/constants/theme';
@@ -181,6 +182,7 @@ export default function AddTransactionScreen() {
       setAllTransactions(transactionRows);
       setPeriodBudgetLines(budgetRows);
       setToastMessage(editing ? 'Transaction updated' : 'Transaction recorded');
+      playSuccessSound();
       if (!editing) {
         setCategoryId(null); setSubcategoryId(null); setSubcategories([]); setAmount(''); setLocation(''); setNotes(''); setDate(today); setDateInputVersion(current => current + 1);
       }
