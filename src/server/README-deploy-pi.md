@@ -34,6 +34,18 @@ The Settings screen reads the latest successful backup from the API and can trig
 - `GET /backup-status` returns the latest recorded backup timestamp and filename.
 - `POST /backup-now` starts the backup job immediately.
 
+## Hourly maintenance health check
+
+`health-check.service` and `health-check.timer` run `scripts/health-check.sh` once an hour (installed/enabled by the deployment script, same as the backup timer).
+
+The check verifies, in order: `budget-api.service`, `expo-app.service`, `nginx`, `wg-quick@wg0`, `dnsmasq`, and `postgresql` are active; the API (`/test-db`) and web app respond locally; the Pi's current public IP matches what `sphomebudget.duckdns.org` resolves to (this is what silently broke the VPN in September 2026 — see repo memory); and root disk usage is below 90%.
+
+Results are appended to `/home/pstrzelbicki/health-check.log` (one line per run, `OK` or `WARN` with details), auto-trimmed to the last 2000 lines. There is no push/email alerting — check the log over SSH:
+
+```bash
+tail -n 50 /home/pstrzelbicki/health-check.log
+```
+
 ## Notes for `api.ts`
 The web client now defaults to the current host for non-Android platforms, so when you open `http://192.168.2.107:8081` it will request `http://192.168.2.107:3000`.
 

@@ -1,0 +1,11 @@
+[Unit]
+Description=HomeBudget maintenance health check
+
+[Service]
+Type=oneshot
+User=pstrzelbicki
+Group=pstrzelbicki
+WorkingDirectory=/home/pstrzelbicki/BudgetApp/BudgetApp
+ExecStart=/usr/bin/env bash /home/pstrzelbicki/BudgetApp/BudgetApp/scripts/health-check.sh
+StandardOutput=journal
+StandardError=journal

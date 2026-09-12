@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the HomeBudget maintenance health check hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=3min
+Unit=health-check.service
+
+[Install]
+WantedBy=timers.target

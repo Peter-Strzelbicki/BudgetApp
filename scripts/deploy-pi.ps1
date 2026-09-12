@@ -62,6 +62,7 @@ try {
         'assets',
         'src',
         'scripts/backup-db.sh',
+        'scripts/health-check.sh',
         'scripts/serve-web.py',
         'scripts/deploy-pi-remote.sh'
     )

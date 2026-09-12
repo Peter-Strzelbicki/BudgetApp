@@ -8,6 +8,8 @@ WEB_SERVICE="expo-app.service"
 API_SERVICE="budget-api.service"
 BACKUP_SERVICE="budget-backup.service"
 BACKUP_TIMER="budget-backup.timer"
+HEALTH_CHECK_SERVICE="health-check.service"
+HEALTH_CHECK_TIMER="health-check.timer"
 NGINX_CONFIG="$APP_ROOT/src/server/homebudget-nginx.conf"
 
 if [[ ! -f "$SOURCE_ARCHIVE" || ! -f "$WEB_ARCHIVE" ]]; then
@@ -17,6 +19,9 @@ fi
 
 mkdir -p "$APP_ROOT"
 tar -xzf "$SOURCE_ARCHIVE" -C "$APP_ROOT"
+
+# Windows-authored scripts sometimes carry CRLF line endings, which breaks bash execution.
+find "$APP_ROOT/scripts" -name '*.sh' -exec sed -i 's/\r$//' {} +
 
 cd "$APP_ROOT"
 
@@ -30,11 +35,13 @@ else
   echo "$CURRENT_LOCKFILE_HASH" > "$LOCKFILE_HASH_FILE"
 fi
 
-sudo systemd-analyze verify "$APP_ROOT/expo-app.service" "$APP_ROOT/src/server/budget-api.service" "$APP_ROOT/src/server/$BACKUP_SERVICE" "$APP_ROOT/src/server/$BACKUP_TIMER"
+sudo systemd-analyze verify "$APP_ROOT/expo-app.service" "$APP_ROOT/src/server/budget-api.service" "$APP_ROOT/src/server/$BACKUP_SERVICE" "$APP_ROOT/src/server/$BACKUP_TIMER" "$APP_ROOT/src/server/$HEALTH_CHECK_SERVICE" "$APP_ROOT/src/server/$HEALTH_CHECK_TIMER"
 sudo install -m 644 "$APP_ROOT/expo-app.service" "/etc/systemd/system/$WEB_SERVICE"
 sudo install -m 644 "$APP_ROOT/src/server/budget-api.service" "/etc/systemd/system/$API_SERVICE"
 sudo install -m 644 "$APP_ROOT/src/server/$BACKUP_SERVICE" "/etc/systemd/system/$BACKUP_SERVICE"
 sudo install -m 644 "$APP_ROOT/src/server/$BACKUP_TIMER" "/etc/systemd/system/$BACKUP_TIMER"
+sudo install -m 644 "$APP_ROOT/src/server/$HEALTH_CHECK_SERVICE" "/etc/systemd/system/$HEALTH_CHECK_SERVICE"
+sudo install -m 644 "$APP_ROOT/src/server/$HEALTH_CHECK_TIMER" "/etc/systemd/system/$HEALTH_CHECK_TIMER"
 sudo install -m 644 "$NGINX_CONFIG" /etc/nginx/sites-available/homebudget
 sudo ln -sf /etc/nginx/sites-available/homebudget /etc/nginx/sites-enabled/homebudget
 sudo rm -f /etc/nginx/sites-enabled/default
@@ -62,9 +69,9 @@ rollback_web() {
 
 trap rollback_web ERR
 sudo systemctl daemon-reload
-sudo systemctl enable "$WEB_SERVICE" "$API_SERVICE" "$BACKUP_TIMER" >/dev/null
+sudo systemctl enable "$WEB_SERVICE" "$API_SERVICE" "$BACKUP_TIMER" "$HEALTH_CHECK_TIMER" >/dev/null
 sudo systemctl restart "$API_SERVICE" "$WEB_SERVICE"
-sudo systemctl start "$BACKUP_TIMER"
+sudo systemctl start "$BACKUP_TIMER" "$HEALTH_CHECK_TIMER"
 sudo systemctl reload nginx
 
 curl --fail --silent --show-error \
